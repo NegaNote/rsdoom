@@ -1,0 +1,42 @@
+[package]
+name = "rsdoom"
+version = "0.1.0"
+edition = "2024"
+license="GPL-2.0-only"
+
+[dependencies]
+bytemuck = "1.25"
+bpaf = "0.9"
+color-eyre = "0.6.5"
+log = { version = "0.4", features = ["release_max_level_warn", "max_level_debug", "kv", "kv_serde", "std"] }
+log4rs = "1.4"
+sdl3 = { version = "0.18", features = ["static-link", "build-from-source", "raw-window-handle"] }
+wgpu = "30.0"
+winnow = "1.0"
+
+
+[[bin]]
+name = "rsdoom"
+
+[lib]
+name = "rsdoom"
+
+[lints.clippy]
+# UM, ACTUALLY
+pedantic = { level = "deny", priority = -1 }
+# DEVELOPING LINTS
+nursery = { level = "deny", priority = -1 }
+# DENY PANICS
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+unchecked_time_subtraction = "deny"
+todo = "deny"
+string_slice = "deny"
+panic_in_result_fn = "deny"
+panic = "deny"
+exit = "deny"
+as_conversions = "deny"
