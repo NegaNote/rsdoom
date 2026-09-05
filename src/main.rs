@@ -1,15 +1,16 @@
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
-
+use argparse::CliArgs;
 use color_eyre::Result;
 use log::{error, info};
 use log4rs::{
     append::console::ConsoleAppender,
     config::{Appender, Root},
 };
+use rsdoom::argparse;
 use sdl3::{event::Event, keyboard::Keycode, pixels::Color};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 const FRAME_TIME: Duration = Duration::new(0, 1_000_000_000u32 / 35);
 
@@ -23,6 +24,21 @@ fn main() -> Result<()> {
         )?;
     log4rs::init_config(logging_config)?;
     color_eyre::install().inspect_err(|_| error!("Could not initialize color_eyre"))?;
+
+    let cli_args = match CliArgs::parse_args(
+        &mut std::env::args_os()
+            .skip(1)
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect(),
+    ) {
+        Ok(args) => args,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    };
+
+    dbg!(&cli_args);
 
     let sdl_context = sdl3::init()?;
 
