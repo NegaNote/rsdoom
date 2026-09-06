@@ -13,6 +13,12 @@ sdl3 = { version = "0.18", features = ["static-link", "build-from-source", "raw-
 wgpu = "30.0"
 winnow = "1.0"
 
+[profile.dev]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = true
 
 [[bin]]
 name = "rsdoom"
