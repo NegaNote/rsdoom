@@ -1030,6 +1030,7 @@ dependencies = [
  "log",
  "log4rs",
  "sdl3",
+ "thiserror",
  "wgpu",
  "winnow",
 ]
