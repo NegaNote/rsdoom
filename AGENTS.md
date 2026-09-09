@@ -11,6 +11,8 @@ after *explicitly* asking the user for permission. Code changes can never be mad
 Documentation, code review, and debugging are the primary responsibilities of agents. Documentation may also be edited by agents,
 but changes must be reviewed by the user before being committed.
 
+Agents must not perform source control operations under any circumstances, and must not make any assumptions about the user's source control workflow.
+
 ## Project expectations
 
 This repository is a safe, idiomatic Rust port of the 90's DOOM engine.
@@ -26,3 +28,5 @@ Freedoom assets are included, but the engine should be able to run with any WAD 
 
 Code must pass all checks before being considered done. If any of the checks fail, the agent should provide guidance on how to fix the issues,
 with the special exception of formatting issues, which can be fixed automatically with `cargo fmt`.
+
+The project's clippy configuration takes an intentionally highly pedantic approach to linting, so any refactors done must be checked for clippy compliance.
