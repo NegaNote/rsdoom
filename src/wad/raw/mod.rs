@@ -1,4 +1,3 @@
-use indexmap::IndexMap;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -13,7 +12,31 @@ use winnow::token::{literal, take};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct WadView {
-    lump_map: IndexMap<LumpName, Lump>,
+    lumps: Vec<(LumpName, Lump)>,
+}
+
+impl WadView {
+    #[must_use]
+    pub fn get_lump_by_name(&self, name: LumpName) -> Option<&Lump> {
+        self.lumps
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, lump)| lump)
+    }
+
+    #[must_use]
+    pub fn get_lumps_by_name(&self, name: LumpName) -> Vec<&Lump> {
+        self.lumps
+            .iter()
+            .filter(|(n, _)| *n == name)
+            .map(|(_, lump)| lump)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn get_lump_at(&self, index: usize) -> Option<&Lump> {
+        self.lumps.get(index).map(|(_, lump)| lump)
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -22,6 +45,13 @@ pub struct LumpName([u8; 8]);
 #[derive(Debug, PartialEq, Eq)]
 pub struct Lump {
     raw_data: Vec<u8>,
+}
+
+impl Lump {
+    #[must_use]
+    pub fn get_raw_data(&self) -> &[u8] {
+        &self.raw_data
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Error)]
@@ -90,7 +120,7 @@ pub fn load_wad(path: PathBuf) -> Result<WadView, WadLoadingError> {
 
     wad_file.seek(SeekFrom::Start(u64::from(header_info.info_table_offset)))?;
 
-    let mut lumps: Vec<LumpInfo> = Vec::with_capacity(header_info.num_lumps.to_usize());
+    let mut lump_infos: Vec<LumpInfo> = Vec::with_capacity(header_info.num_lumps.to_usize());
 
     for _ in 0..header_info.num_lumps {
         let mut lump_info_bytes = [0u8; 16];
@@ -99,19 +129,19 @@ pub fn load_wad(path: PathBuf) -> Result<WadView, WadLoadingError> {
             .parse(&lump_info_bytes)
             .map_err(|_| WadLoadingError::InvalidLumpName(LumpNameError))?;
 
-        lumps.push(lump_info);
+        lump_infos.push(lump_info);
     }
 
-    let mut lump_map: IndexMap<LumpName, Lump> = IndexMap::with_capacity(lumps.len());
+    let mut lumps: Vec<(LumpName, Lump)> = Vec::with_capacity(lump_infos.len());
 
-    for lump_info in lumps {
+    for lump_info in lump_infos {
         wad_file.seek(SeekFrom::Start(u64::from(lump_info.offset)))?;
         let mut raw_data = vec![0u8; lump_info.size.to_usize()];
         wad_file.read_exact(&mut raw_data)?;
-        lump_map.insert(lump_info.name, Lump { raw_data });
+        lumps.push((lump_info.name, Lump { raw_data }));
     }
 
-    Ok(WadView { lump_map })
+    Ok(WadView { lumps })
 }
 
 /// Check if the input is a valid WAD type (IWAD or PWAD).

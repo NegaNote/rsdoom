@@ -861,7 +861,6 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "color-eyre",
- "indexmap",
  "log",
  "sdl3",
  "simple_logger",

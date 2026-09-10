@@ -16,12 +16,14 @@ fn load_fixture_for_test(name: &str) -> Option<WadView> {
     result.ok()
 }
 
-fn assert_lump_data(wad: &WadView, name: LumpName, expected: &[u8]) {
-    let lump = wad.lump_map.get(&name);
-    assert!(lump.is_some(), "missing lump: {name:?}");
-    if let Some(lump) = lump {
-        assert_eq!(lump.raw_data, expected);
-    }
+fn assert_lump_data(wad: &WadView, name: LumpName, expected: &[&[u8]]) {
+    let lumps = wad
+        .get_lumps_by_name(name)
+        .iter()
+        .map(|lump| lump.get_raw_data())
+        .collect::<Vec<_>>();
+
+    assert_eq!(lumps, expected);
 }
 
 mod wad_type {
@@ -167,79 +169,78 @@ mod load_wad_success {
     #[test]
     fn loads_empty_iwad() {
         if let Some(wad) = load_fixture_for_test("valid_empty_iwad.wad") {
-            assert!(wad.lump_map.is_empty());
+            assert!(wad.lumps.is_empty());
         }
     }
 
     #[test]
     fn loads_empty_pwad() {
         if let Some(wad) = load_fixture_for_test("valid_empty_pwad.wad") {
-            assert!(wad.lump_map.is_empty());
+            assert!(wad.lumps.is_empty());
         }
     }
 
     #[test]
     fn loads_single_lump() {
         if let Some(wad) = load_fixture_for_test("valid_single_lump.wad") {
-            assert_eq!(wad.lump_map.len(), 1);
-            assert_lump_data(&wad, LumpName(*b"HELLO\0\0\0"), b"HELLO WAD");
+            assert_eq!(wad.lumps.len(), 1);
+            assert_lump_data(&wad, LumpName(*b"HELLO\0\0\0"), &[b"HELLO WAD"]);
         }
     }
 
     #[test]
     fn loads_multiple_lumps() {
         if let Some(wad) = load_fixture_for_test("valid_multiple_lumps.wad") {
-            assert_eq!(wad.lump_map.len(), 3);
-            assert_lump_data(&wad, LumpName(*b"LUMPONE\0"), b"ONE");
-            assert_lump_data(&wad, LumpName(*b"LUMPTWO\0"), b"TWO-TWO");
-            assert_lump_data(&wad, LumpName(*b"LUMPTHR\0"), b"THREE");
+            assert_eq!(wad.lumps.len(), 3);
+            assert_lump_data(&wad, LumpName(*b"LUMPONE\0"), &[b"ONE"]);
+            assert_lump_data(&wad, LumpName(*b"LUMPTWO\0"), &[b"TWO-TWO"]);
+            assert_lump_data(&wad, LumpName(*b"LUMPTHR\0"), &[b"THREE"]);
         }
     }
 
     #[test]
     fn loads_empty_lump() {
         if let Some(wad) = load_fixture_for_test("valid_empty_lump.wad") {
-            assert_eq!(wad.lump_map.len(), 1);
-            assert_lump_data(&wad, LumpName(*b"EMPTY\0\0\0"), b"");
+            assert_eq!(wad.lumps.len(), 1);
+            assert_lump_data(&wad, LumpName(*b"EMPTY\0\0\0"), &[b""]);
         }
     }
 
     #[test]
     fn loads_null_padded_name() {
         if let Some(wad) = load_fixture_for_test("valid_null_padded_name.wad") {
-            assert_lump_data(&wad, LumpName(*b"PLAYPAL\0"), b"palette");
+            assert_lump_data(&wad, LumpName(*b"PLAYPAL\0"), &[b"palette"]);
         }
     }
 
     #[test]
-    fn later_duplicate_replaces_earlier_data() {
+    fn duplicates_preserve_all_mentions() {
         if let Some(wad) = load_fixture_for_test("duplicate_names.wad") {
-            assert_eq!(wad.lump_map.len(), 1);
-            assert_lump_data(&wad, LumpName(*b"DUPL\0\0\0\0"), b"second");
+            assert_lump_data(&wad, LumpName(*b"DUPL\0\0\0\0"), &[b"first", b"second"]);
         }
     }
 
     #[test]
     fn loads_overlapping_lumps_independently() {
         if let Some(wad) = load_fixture_for_test("overlapping_lumps.wad") {
-            assert_eq!(wad.lump_map.len(), 2);
-            assert_lump_data(&wad, LumpName(*b"FIRST\0\0\0"), b"ABCDE");
-            assert_lump_data(&wad, LumpName(*b"SECOND\0\0"), b"DEFGHI");
+            assert_eq!(wad.lumps.len(), 2);
+            assert_lump_data(&wad, LumpName(*b"FIRST\0\0\0"), &[b"ABCDE"]);
+            assert_lump_data(&wad, LumpName(*b"SECOND\0\0"), &[b"DEFGHI"]);
         }
     }
 
     #[test]
     fn ignores_trailing_bytes_after_directory() {
         if let Some(wad) = load_fixture_for_test("trailing_bytes.wad") {
-            assert_eq!(wad.lump_map.len(), 1);
-            assert_lump_data(&wad, LumpName(*b"DATA\0\0\0\0"), b"DATA");
+            assert_eq!(wad.lumps.len(), 1);
+            assert_lump_data(&wad, LumpName(*b"DATA\0\0\0\0"), &[b"DATA"]);
         }
     }
 
     #[test]
     fn accepts_directory_beyond_eof_without_lumps() {
         if let Some(wad) = load_fixture_for_test("directory_beyond_eof_empty.wad") {
-            assert!(wad.lump_map.is_empty());
+            assert!(wad.lumps.is_empty());
         }
     }
 }
