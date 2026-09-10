@@ -1,12 +1,10 @@
 use argparse::CliArgs;
 use color_eyre::Result;
 use log::{error, info};
-use log4rs::{
-    append::console::ConsoleAppender,
-    config::{Appender, Root},
-};
+
 use rsdoom::argparse;
 use sdl3::{event::Event, keyboard::Keycode, pixels::Color};
+use simple_logger::SimpleLogger;
 use std::{
     thread,
     time::{Duration, Instant},
@@ -15,15 +13,20 @@ use std::{
 const FRAME_TIME: Duration = Duration::new(0, 1_000_000_000u32 / 35);
 
 fn main() -> Result<()> {
-    let logging_config = log4rs::config::Config::builder()
-        .appender(Appender::builder().build("stdout", Box::new(ConsoleAppender::builder().build())))
-        .build(
-            Root::builder()
-                .appender("stdout")
-                .build(log::LevelFilter::Trace),
-        )?;
-    log4rs::init_config(logging_config)?;
-    color_eyre::install().inspect_err(|_| error!("Could not initialize color_eyre"))?;
+    let logging_level = if cfg!(debug_assertions) {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    };
+
+    SimpleLogger::new()
+        .with_level(logging_level)
+        .env()
+        .with_threads(true)
+        .with_local_timestamps()
+        .init()?;
+
+    color_eyre::install()?;
 
     let cli_args = match CliArgs::parse_args(
         &mut std::env::args_os()
