@@ -24,7 +24,7 @@ Freedoom assets are included, but the engine should be able to run with any WAD 
 - Formatting check: `cargo fmt --check`
 - Formatting fix: `cargo fmt`
 - Linting: `cargo clippy`
-- Testing: `cargo nextest run`
+- Testing: `cargo test`
 
 Code must pass all checks before being considered done. If any of the checks fail, the agent should provide guidance on how to fix the issues,
 with the special exception of formatting issues, which can be fixed automatically with `cargo fmt`.
