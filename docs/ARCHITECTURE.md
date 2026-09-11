@@ -4,10 +4,10 @@
 
   Goals, in priority order:
 
-  1. Safety and idiomatic Rust — no unsafe game logic, no panics on malformed data, and strong types instead of raw C-style global state and bitfields wherever it improves correctness and maintainability. Internal representation (fixed-point vs floating-point, iteration order, data layout) may differ from vanilla, but **external behavior is deterministic and reproducible**.
-  2. Gameplay compatibility with WAD ecosystem — the project should load and play original IWAD/PWAD assets correctly, supporting the full range from vanilla through id24. The engine should *feel* like DOOM: correct physics, responsive input, proper enemy behavior, and accurate rendering. Rendering appearance and input responsiveness should match user expectations, but internal representation is free to evolve.
-  3. Demo compatibility — support playback and recording of vanilla DOOM demos and demos created by other source ports. This is achieved through per-session simulation controller strategy that encodes a (complevel, perf_mode) pair, ensuring deterministic replay and cross-port compatibility.
-  4. Performance via modern architecture — a clear actor/message-passing pipeline, data-oriented structures where they help, and a renderer/audio split that does not block the simulation loop. Performance modes (floating-point physics, modern spatial structures) are available as alternatives to fixed-point modes without sacrificing determinism.
+  1. Safety and idiomatic Rust — no unsafe game logic, no panics on malformed data, and strong types instead of raw C-style global state and bitfields wherever it improves correctness and maintainability. Internal representation may differ from vanilla, but **simulation behavior is deterministic and reproducible across builds of the same RSDoom version**, primarily on Linux and Windows and ideally on other platforms built from the same released source.
+  2. Gameplay compatibility with the WAD ecosystem — the project should load and play original IWAD/PWAD assets correctly, with a staged compatibility plan from vanilla through Boom, MBF, MBF21, and id24 features. The engine should *feel* like DOOM: correct physics, responsive input, proper enemy behavior, and accurate rendering.
+  3. Demo compatibility — support playback and recording of vanilla DOOM demos and demos created by compatible source ports when all behavior-affecting factors match. These include compatibility level and flags, patches, map metadata, skill, RNG algorithm, startup state, and demo format; DSDA-Doom is a primary behavioral reference where applicable.
+  4. Performance via modern architecture — a clear actor/message-passing pipeline, data-oriented structures where they help, and a renderer/audio split that does not block the simulation loop. Performance modes are available only where they preserve the determinism contract; determinism has priority over throughput.
 
   ---
 
@@ -43,7 +43,7 @@
 
   The simulation actor owns the active application state machine and the menu stack. This is deliberate: the menu is not a separate subsystem with its own hidden state; it is part of the simulation's authority over how the game is currently running, while the renderer consumes a snapshot and composes overlays without caring why the current state changed.
 
-  Each edge is a typed message or a publish path, not a direct function call. Actors run on dedicated OS threads where useful; input is still associated with the platform event pump when that is the native mechanism.
+  Each edge is a typed message or a publish path, not a direct function call. Actors run on dedicated OS threads where useful; input remains associated with the platform event pump when that is the native mechanism. Thread scheduling must never determine simulation results.
 
   ### Why actors here specifically
 
@@ -102,9 +102,12 @@
 
   Design goals for the loader:
 
-  - No panics on malformed input; invalid records become explicit errors.
-  - Asset loading is bounded and can be structured around worker jobs.
+  - No panics on malformed input; invalid records become contextual, explicit errors.
+  - All offsets, lengths, counts, and allocations are checked against integer overflow and configured resource limits.
+  - Asset loading is bounded, cancellable, and can be structured around worker jobs.
   - The final result is an immutable, shareable `GameData` object: palettes, textures, flats, geometry, and static map metadata.
+
+  Unsupported formats, malformed lumps, conflicting namespaces, and resource-limit violations are reported with the affected file, lump, and map. The loader does not silently substitute valid-looking defaults.
 
   ### 3.2 Input system
 
@@ -120,9 +123,10 @@
 
   Core invariants:
 
-  - Input events are buffered rather than dropped under normal conditions.
+  - Device events are translated into a bounded, explicitly timed stream of per-tic commands; simulation input is never assigned according to incidental thread timing.
   - The sim actor is the single consumer of input commands.
   - Input translation is intentionally decoupled from game logic.
+  - Queue overflow, device loss, and quit events are surfaced through explicit diagnostics rather than silently ignored.
 
   ### 3.3 Simulation actor
 
@@ -146,7 +150,19 @@
 
   The simulation loop should be independent from the render frame rate. The game should run on a consistent tic cadence, while the renderer may consume a newer or interpolated frame as available.
 
-  #### 3.3.1 Application state machine
+  #### 3.3.1 Tick protocol
+
+  The simulation is the sole authority for the logical timeline. At each tic it:
+
+  1. establishes the input cutoff for that tic and produces exactly one canonical command;
+  2. applies queued state and control transitions at the defined tic boundary;
+  3. advances the selected simulation controller in its specified object and event order;
+  4. emits ordered audio/gameplay events and a new render publication;
+  5. records the resulting command and, when enabled, a compact state hash for diagnostics.
+
+  Render and audio threads may lag or skip work, but they cannot add, remove, or reorder simulation events. Replay feeds the same canonical command stream directly into this protocol.
+
+  #### 3.3.2 Application state machine
 
   The simulation should not be a pile of global flags. Instead, active engine state is represented explicitly:
 
@@ -167,11 +183,11 @@
   - no partially updated state observable between frames
   - exhaustive state handling instead of scattered `if` checks
 
-  #### 3.3.2 Seamless map switching
+  #### 3.3.3 Seamless map switching
 
   Map changes are not treated as an ad hoc teardown/rebuild across multiple subsystems. Instead, a map transition becomes a normal simulation transition that swaps the active gameplay state at a safe boundary.
 
-  The active `GameData` may already contain all levels resident in memory. Switching maps then becomes:
+  The immutable `GameData` may contain all levels resident in memory or provide bounded, validated level loading. In either case, switching maps then becomes:
 
   - finish the current simulation tick
   - apply the level transition
@@ -181,7 +197,7 @@
 
   This keeps map transitions clean while preserving the idea that the renderer only sees a complete, coherent frame.
 
-  #### 3.3.3 Menu system
+  #### 3.3.4 Menu system
 
   The menu logic belongs to the sim actor because it is fundamentally part of the active app state. It is modeled as a stack of screens, not a single mutable flag, so menus can nest naturally and the system can handle pause screens, option screens, and prompts in a consistent way.
 
@@ -190,7 +206,7 @@
   Core rules:
 
   - Input goes to the menu while the menu is open.
-  - Gameplay is paused while the menu is active, if that is the desired UX.
+  - Gameplay pause behavior is an explicit application-state policy, not an incidental consequence of the menu thread.
   - Menu actions become ordinary simulation transitions or renderer/audio commands.
 
   ### 3.4 Renderer actor
@@ -211,13 +227,15 @@
   - software renderer: classic column/span-style rendering, but structured safely and without shared global state
   - hardware renderer: modern GPU pipeline using textured geometry and a 3D pass, with a 2D overlay pass for UI/menu rendering
 
-  Both backends consume the same snapshot structure and can be swapped at runtime without changing the sim contract.
+  Both backends consume the same snapshot structure and can be swapped at runtime without changing the sim contract. The software renderer is the accuracy reference: it should preserve classic DOOM projection, clipping, palette/colormap, visplane, sprite, fuzz, and special-effect behavior wherever the selected compatibility profile defines it. The hardware renderer may use documented approximations; those are presentation differences, not simulation differences.
 
   Renderer invariants:
 
   - It must never mutate live simulation state.
   - It must be able to render the current snapshot without any direct actor references.
   - Menu overlay is composed after the main scene, not instead of it.
+
+  Render publications are immutable, versioned by simulation tic, and render-oriented rather than full copies of simulation state. Publication uses a bounded latest-frame policy: a slow renderer may skip intermediate frames but never creates simulation backpressure. Interpolation is disabled across map changes, teleports, and other marked state discontinuities.
 
   ### 3.5 Audio actor
 
@@ -229,8 +247,9 @@
   - maintain a separate control-side queue or state ring
   - generate output on the relevant audio thread using a mixer callback
   - handle startup/shutdown of the sound device
+  - report device loss, queue overflow, and other failures to the supervisor
 
-  The mixer's design should keep the actual realtime callback small and predictable, with the heavier logic on the non-realtime control side.
+  The mixer's design should keep the actual realtime callback small and predictable, with the heavier logic on the non-realtime control side. Audio is presentation, not simulation authority. Events carry their originating tic and ordering information, so delayed or unavailable audio cannot alter gameplay or replay results.
 
   ### 3.6 Main / supervisor
 
@@ -244,6 +263,14 @@
   6. coordinating clean shutdown
 
   All heavy engine logic should live in the subsystems, not in the supervisor.
+
+  The supervisor also owns failure propagation: actor termination, channel closure, asset-load errors, renderer failures, and audio-device failures become structured diagnostics and follow an explicit shutdown or recovery policy. No actor treats an unexpected disconnect as successful completion.
+
+  ### 3.7 Logging, tracing, and debugging
+
+  Diagnostics are part of the architecture rather than an afterthought. Structured logs should include subsystem, actor, map, simulation tic, profile, and relevant WAD/lump identifiers. Normal gameplay logging remains quiet; configurable levels enable detailed input, state-transition, controller, rendering, audio, and loader traces.
+
+  Deterministic replay tooling should be able to record canonical commands, profile and asset fingerprints, per-tic state hashes, and ordered events. A desync report should identify the first divergent tic and provide enough preceding context to reproduce it. Debug builds may expose actor health, queue depth, snapshot age, and controller state without making those diagnostics part of gameplay behavior.
 
   ---
 
@@ -260,11 +287,13 @@
   Channels and publication paths:
 
   - `InputEvent`: input → sim
-  - `Snapshot`: sim → render, published as immutable data (ring buffer or atomic snapshot handle)
+  - `Snapshot`: sim → render, published as an immutable, bounded latest-frame stream with simulation-tic identifiers
   - `SoundEvent` / `MusicEvent`: sim → audio
   - shutdown / control messages: supervisor → all actors
 
   This gives the engine a clear separation of concerns: simulation, presentation, and audio are independent enough to be tested and evolved separately but remain connected through a small, shared message contract.
+
+  The message, snapshot, command, and replay contracts are versioned within the released engine format so diagnostics and regression artifacts remain interpretable.
 
   ---
 
@@ -323,32 +352,32 @@
   The first implementation should intentionally avoid some of the historically complex requirements of the DOOM ecosystem:
 
   - frame-perfect performance-equivalent behavior (e.g., exact CPU cycle-level timing matching vanilla)
-  - support for obscure or undocumented engine quirks beyond the major complevel variants
   - preservation of the original C source's global mutable state patterns as a design target (internal freedom to modernize representation is required)
-  - high-performance floating-point variants (reserved for later, once determinism is validated for fixed-point modes)
+  - ZDoom-family map and actor semantics, including ACS and related scripting systems
+  - high-performance floating-point variants until their cross-build determinism is validated
 
-  Demo compatibility *is* a core goal (see goals section), but it is achieved through deterministic simulation, not through bit-identical reproduction of undefined behavior. The engine is free to use Rust's type system, modern math, and idiomatic patterns internally, provided external behavior is reproducible and correct for each chosen controller/complevel pair.
+  Demo compatibility *is* a core goal (see goals section), but it is conditional: a demo is expected to match when all behavior-affecting inputs are equal. The engine is not required to reproduce undefined behavior or unsupported port semantics.
 
   ---
 
   ## 7. Demo compatibility (core goal)
 
-  Demo compatibility is a first-class requirement achieved through deterministic simulation controllers, not a rewrite of the architecture.
+  Demo compatibility is a first-class requirement achieved through deterministic simulation controllers, not a rewrite of the architecture. RSDoom's own replay determinism, vanilla demo playback, and external source-port compatibility are separate acceptance targets.
 
-  The key insight is that **internal representation freedom and external determinism are compatible**. The engine is free to use floating-point physics, modern spatial structures, and idiomatic Rust patterns, provided that for a given simulation controller, the same input sequence always produces the same observable gameplay output.
+  The key constraint is that **internal representation freedom is subordinate to external determinism**. For a given released RSDoom version, controller, profile, WAD inputs, and canonical command stream, supported builds must produce the same gameplay state and event sequence, with bit-equivalent final results wherever practicable.
 
   ### 7.1 Determinism via simulation controller
 
-  Each simulation controller (e.g., `VanillaFixedPoint`, `MBF21FloatPerf`) is deterministic by construction: for a fixed RNG seed, input stream, and WAD, it always produces the same behavior. This is the foundation of demo playback.
+  Each simulation controller (e.g., `VanillaFixedPoint`, `MBF21FloatPerf`) is deterministic by construction: for a fixed simulation profile, input stream, and validated game data, it always produces the same behavior. This is the foundation of replay and demo playback.
 
   Controllers vary in:
 
   - internal numeric representation (fixed-point vs floating-point)
-  - iteration order (deterministic vs unspecified)
+  - explicitly specified object and event iteration order
   - physics integration method
   - ruleset semantics
 
-  But all controllers satisfy the same contract: **given identical input and initial state, produce identical output**.
+  All controllers satisfy the same contract: **given identical input, profile, game data, and initial state, produce identical output**. Object order is part of the controller contract and is never unspecified for a compatibility or replay mode.
 
   ### 7.2 Input quantization
 
@@ -361,24 +390,26 @@
   A dedicated demo module encodes:
 
   - header metadata and version info
-  - simulation controller selector (complevel + perf_mode pair)
+  - demo format and source-port version
+  - a complete simulation profile: compatibility level and flags, RNG algorithm, skill, startup state, map metadata, and applicable patches
+  - WAD and patch fingerprints
   - a stream of per-tic commands
 
-  When loading a demo, the engine instantiates the matching controller and feeds the stored command stream into it. If implementations are correct, the replay is bit-identical (fixed-point) or numerically equivalent (floating-point).
+  When loading a demo, the engine validates the required inputs and instantiates the matching controller and profile before feeding the command stream into the tick protocol. RSDoom-produced replays should be bit-equivalent wherever practicable; any tolerance-based comparison is limited to explicitly presentation-only data.
 
   ### 7.4 External source-port compatibility
 
-  By matching demo formats and controller behavior from external ports (e.g., PrBoom+, MBF21 implementations), RSDoom can play and record demos in a cross-compatible manner. The controller abstraction makes this tractable: instead of a monolithic engine with scattered compatibility checks, each controller variant is independently testable against its canonical source-port reference.
+  External demo compatibility is an adapter and conformance problem, not a consequence of the controller name alone. RSDoom should use DSDA-Doom as the primary reference for supported Boom/MBF/MBF21 behavior, while preserving the original demo format and all relevant startup metadata. A demo is accepted only when its format, port behavior, compatibility flags, patches, map metadata, RNG algorithm, WAD identity, and other required factors are supported and equal. Unsupported or mismatched inputs produce an actionable incompatibility diagnostic.
 
   ---
 
   ## 8. Compatibility and performance modes
 
-  The engine supports both historical DOOM variant compatibility and high-performance simulation. These concerns are **orthogonal**: a given WAD may be played under any (complevel, perf_mode) pairing, and determinism is determined by both together, not one or the other.
+  The engine supports historical DOOM variant compatibility and, later, performance-oriented simulation. These concerns are represented separately but jointly determine behavior: a profile combines compatibility level, compatibility flags, RNG algorithm, metadata/patch inputs, and performance mode. Not every pairing is valid or demo-compatible.
 
   ### 8.1 Simulation controller abstraction
 
-  Rather than scattering conditional branches across the simulation loop, the engine uses a strategy pattern: a single `SimulationController` trait object is instantiated at startup to encapsulate the entire (complevel, perf_mode) pair. This controller owns all behavior differences as concrete implementations with zero runtime branches on the hot path.
+  Rather than scattering configuration lookups across the simulation loop, the engine uses a strategy pattern: a single `SimulationController` trait object is instantiated once per gameplay session from the selected profile. The controller owns behavior differences, while shared algorithms and data structures remain reusable. The configuration choice is paid once; it does not guarantee that every internal branch or dispatch is eliminated.
 
   Example structure:
 
@@ -397,21 +428,15 @@
 
   - ruleset-specific special handling (linedef/sector/thing behavior)
   - physics integration method (fixed-point arithmetic vs floating-point)
-  - object iteration order (deterministic vs unspecified)
-  - RNG behavior (vanilla seeding and sequence vs modern)
+  - specified object and event iteration order
+  - RNG behavior and algorithm, including complevel-specific seeding and sequence
   - compatibility quirks and edge cases
 
-  The sim actor instantiates one controller at level load time based on the selected complevel and performance mode, and the main loop calls methods on that controller without branching. The choice is made once and paid for once; subsequent ticks are monomorphic.
+  The sim actor instantiates one controller at session or level setup from the complete profile. The main loop uses that controller without repeatedly looking up compatibility configuration. A map transition may replace the gameplay state, but it cannot silently change the active profile.
 
   ### 8.2 Demo metadata and external source-port compatibility
 
-  Every demo encodes a (complevel, perf_mode) pair in its header. This makes demos reproducible and makes it possible to play back demos recorded by other source ports with the correct behavior:
-
-  - A Boom-era demo implicitly specifies (Boom, FixedPoint) behavior
-  - An external port's high-perf demo might specify (MBF21, FloatPerf)
-  - A vanilla demo specifies (Vanilla, FixedPoint)
-
-  When loading a demo or establishing a new level under a given configuration, the engine instantiates the matching controller. This guarantees that the simulation behaves identically across replays and across ports, provided all controller implementations are correct.
+  Every demo identifies the profile and external inputs needed to reproduce it. A complevel/performance pair is only one part of that identity; flags, RNG algorithm, patches, UMAPINFO, skill, map, WAD fingerprints, and source-port/demo version are also relevant. Loading validates these inputs before instantiating the controller. This makes same-input replay deterministic without claiming that all demos sharing a complevel are interchangeable.
 
   ### 8.3 Data-model extensions
 
@@ -426,30 +451,27 @@
   - generalized linedef specials
   - extended sector behavior
   - additional thing and weapon flags
-  - DeHackEd and MAPINFO-style metadata variants
+  - DeHackEd/BEX behavior patches
+  - UMAPINFO metadata as the priority extended map-info format, followed by other supported MAPINFO variants
   - alternate node formats normalized into a single domain representation
+  - extended blockmaps, map formats, thing flags, weapons, states, and specials
 
-  The critical design rule: all behavior variation is encapsulated in the controller. Other subsystems (renderer, audio, menu, input) do not need to know or care which variant is active.
+  The critical design rule is that behavior variation is resolved into the profile, game data, and controller. Renderer, audio, menu, and input do not implement gameplay rules, though the render snapshot may expose profile-dependent visual data.
 
   ### 8.4 Implications for testing
 
   The strategy pattern creates clear testing boundaries:
 
   - **Unit tests for each controller**: Each concrete controller has its own test suite validating its specific behavior. A test for `BoomFloatPerf` exercises only that variant's code path without branches or pollution from others.
-  - **Determinism validation**: Record the same input stream against two instances of the same controller and verify bit-exact match (fixed-point) or close match (floating-point, after accounting for rounding). This validates that a given controller is truly deterministic.
+  - **Determinism validation**: Run the same command stream against independent builds of the same released version on Linux and Windows and compare per-tic state hashes and final serialized state, requiring bit equality wherever practicable.
   - **Cross-variant regression**: Play the same simple test level (e.g., E1M1 with scripted player input) under each controller and record traces. These traces will differ legitimately, but should remain stable for their respective controllers.
-  - **External demo compatibility**: Collect test demos from canonical source ports (PrBoom+, MBF21 ports, etc.). When running under the matching controller, verify that the engine produces the same output sequence or stays within acceptable tolerances (floating-point).
-  - **No monomorphization fallback**: Each controller must have *at least one* test case that exercises its code path. If a controller is never tested, it is dead code.
+  - **External demo compatibility**: Collect demos from vanilla and DSDA-Doom reference configurations. Validate the complete profile and compare gameplay traces, state hashes, and completion outcomes; tolerances apply only to explicitly presentation-only data.
+  - **Malformed-input coverage**: Exercise invalid WADs, patches, metadata, demos, and resource-limit cases and require contextual errors without panics.
+  - **Diagnostics coverage**: Ensure replay traces, state hashes, and actor failures identify the tic, profile, map, and relevant input.
 
   ### 8.5 Cache efficiency
 
-  By instantiating a single controller and calling through its methods, the engine avoids:
-
-  - Per-frame conditional branches on complevel or perf mode
-  - Register pressure from condition codes and branch prediction state
-  - Cache pollution from code paths not taken
-
-  Modern CPU predictors handle indirect (vtable) calls efficiently after a few iterations of the main loop, so the cost is minimal once the call pattern is learned. The trade-off is that controller implementations cannot be inline-optimized as easily, but the monomorphic code within each implementation remains very optimizable.
+  Instantiating one controller avoids repeated configuration lookup and keeps the hot loop's compatibility decision stable. This is a clarity and predictability choice first; any dispatch or cache benefit is secondary and must not weaken deterministic ordering. Performance work is measured only after profiling and cannot change the replay contract.
 
   ### 8.6 Recommended sequencing
 
@@ -458,10 +480,12 @@
   1. implement the simulation controller abstraction with a single `VanillaFixedPoint` impl
   2. define a stable per-tic command structure and make simulation consume it
   3. verify vanilla deterministic behavior with scripted input and recorded traces
-  4. add `VanillaFloatPerf` as the first performance variant, validating it plays the same WADs
-  5. layer in Boom, MBF, and MBF21 rulesets (both fixed-point and performance variants)
-  6. collect and test against external source-port demos for cross-port compatibility
-  7. treat id24 as an ongoing compatibility target rather than a prerequisite
+  4. add cross-build determinism checks and replay diagnostics before optimizing
+  5. layer in Boom, MBF, and MBF21 fixed-point rulesets, using DSDA-Doom as the reference where applicable
+  6. prioritize DeHackEd/BEX, UMAPINFO, extended map formats, flags, states, weapons, and specials needed by those profiles
+  7. add performance variants only after their determinism is demonstrated across supported builds
+  8. collect and test against external source-port demos for conditional cross-port compatibility
+  9. treat id24 as an ongoing compatibility target rather than a prerequisite; retain ZDoom-family semantics and ACS as explicit non-goals
 
   ---
 
@@ -473,6 +497,8 @@
   - explicit state machine rather than global flags
   - immutable snapshot publication for the renderer
   - clearly bounded audio and input layers
-  - a ruleset compatibility layer for historical DOOM variants
+  - a ruleset and profile compatibility layer for historical DOOM variants
+  - deterministic replay, state hashing, and actionable diagnostics
+  - an exactness-oriented software renderer with explicitly scoped hardware approximations
 
   This keeps the port faithful to the spirit of the original game while making the implementation safer, more testable, and far easier to extend by human developers over time.
