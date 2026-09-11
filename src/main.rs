@@ -1,6 +1,6 @@
 use argparse::CliArgs;
-use color_eyre::Result;
 use log::{error, info};
+use std::process::ExitCode;
 
 use rsdoom::argparse;
 use sdl3::{event::Event, keyboard::Keycode, pixels::Color};
@@ -12,21 +12,23 @@ use std::{
 
 const FRAME_TIME: Duration = Duration::new(0, 1_000_000_000u32 / 35);
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     let logging_level = if cfg!(debug_assertions) {
         log::LevelFilter::Debug
     } else {
         log::LevelFilter::Info
     };
 
-    SimpleLogger::new()
+    let Ok(()) = SimpleLogger::new()
         .with_level(logging_level)
         .env()
         .with_threads(true)
         .with_local_timestamps()
-        .init()?;
-
-    color_eyre::install()?;
+        .init()
+    else {
+        eprintln!("Failed to initialize logger");
+        return ExitCode::from(1);
+    };
 
     let cli_args = match CliArgs::parse_args(
         &mut std::env::args_os()
@@ -36,24 +38,34 @@ fn main() -> Result<()> {
     ) {
         Ok(args) => args,
         Err(err) => {
+            // Intentionally using eprintln! instead of logging because we want to directly print out
+            // the error messages, which could include the usage text,
+            // without any additional formatting or prefixes that logging might add.
             eprintln!("{err}");
-            std::process::exit(1);
+            return ExitCode::FAILURE;
         }
     };
 
     dbg!(&cli_args);
 
-    let sdl_context = sdl3::init()?;
+    let Ok(sdl_context) = sdl3::init() else {
+        error!("Could not initialize SDL3");
+        return ExitCode::FAILURE;
+    };
 
-    let video_subsystem = sdl_context
-        .video()
-        .inspect_err(|_| error!("Could not initialize video subsystem"))?;
+    let Ok(video_subsystem) = sdl_context.video() else {
+        error!("Could not initialize video subsystem");
+        return ExitCode::FAILURE;
+    };
 
-    let window = video_subsystem
+    let Ok(window) = video_subsystem
         .window("RSDoom", 640, 480)
         .position_centered()
         .build()
-        .inspect_err(|_| error!("Could not create window"))?;
+    else {
+        error!("Could not create window");
+        return ExitCode::FAILURE;
+    };
 
     let mut canvas = window.into_canvas();
 
@@ -65,7 +77,10 @@ fn main() -> Result<()> {
 
     // This is just placeholder code, will implement actual game logic later
 
-    let mut event_pump = sdl_context.event_pump()?;
+    let Ok(mut event_pump) = sdl_context.event_pump() else {
+        error!("Could not create event pump");
+        return ExitCode::FAILURE;
+    };
     let mut i: u8 = 0;
     'running: loop {
         let frame_start = Instant::now();
@@ -94,5 +109,5 @@ fn main() -> Result<()> {
 
     info!("Exiting RSDoom");
 
-    Ok(())
+    ExitCode::SUCCESS
 }
