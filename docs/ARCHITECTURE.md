@@ -355,6 +355,7 @@
   - preservation of the original C source's global mutable state patterns as a design target (internal freedom to modernize representation is required)
   - ZDoom-family map and actor semantics, including ACS and related scripting systems
   - high-performance floating-point variants until their cross-build determinism is validated
+  - Networked multiplayer, which would require significant changes and additional design work to the simulation architecture and tick protocol.
 
   Demo compatibility *is* a core goal (see goals section), but it is conditional: a demo is expected to match when all behavior-affecting inputs are equal. The engine is not required to reproduce undefined behavior or unsupported port semantics.
 
