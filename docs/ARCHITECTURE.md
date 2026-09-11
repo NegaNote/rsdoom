@@ -4,9 +4,10 @@
 
   Goals, in priority order:
 
-  1. Safety and idiomatic Rust — no unsafe game logic, no panics on malformed data, and strong types instead of raw C-style global state and bitfields wherever it improves correctness and maintainability.
-  2. Performance via modern architecture — a clear actor/message-passing pipeline, data-oriented structures where they help, and a renderer/audio split that does not block the simulation loop.
-  3. Gameplay-compatible, not bit-exact — the project should behave like DOOM, load original IWAD/PWAD assets, and support modern engine ergonomics without guaranteeing exact vanilla demo compatibility or frame-perfect determinism.
+  1. Safety and idiomatic Rust — no unsafe game logic, no panics on malformed data, and strong types instead of raw C-style global state and bitfields wherever it improves correctness and maintainability. Internal representation (fixed-point vs floating-point, iteration order, data layout) may differ from vanilla, but **external behavior is deterministic and reproducible**.
+  2. Gameplay compatibility with WAD ecosystem — the project should load and play original IWAD/PWAD assets correctly, supporting the full range from vanilla through id24. The engine should *feel* like DOOM: correct physics, responsive input, proper enemy behavior, and accurate rendering. Rendering appearance and input responsiveness should match user expectations, but internal representation is free to evolve.
+  3. Demo compatibility — support playback and recording of vanilla DOOM demos and demos created by other source ports. This is achieved through per-session simulation controller strategy that encodes a (complevel, perf_mode) pair, ensuring deterministic replay and cross-port compatibility.
+  4. Performance via modern architecture — a clear actor/message-passing pipeline, data-oriented structures where they help, and a renderer/audio split that does not block the simulation loop. Performance modes (floating-point physics, modern spatial structures) are available as alternatives to fixed-point modes without sacrificing determinism.
 
   ---
 
@@ -321,91 +322,104 @@
 
   The first implementation should intentionally avoid some of the historically complex requirements of the DOOM ecosystem:
 
-  - exact vanilla demo playback and recording compatibility
-  - frame-perfect deterministic tic execution
-  - strict compatibility with every historical rule variant of the original engine
-  - preserving the original C source's global mutable state patterns as a design target
+  - frame-perfect performance-equivalent behavior (e.g., exact CPU cycle-level timing matching vanilla)
+  - support for obscure or undocumented engine quirks beyond the major complevel variants
+  - preservation of the original C source's global mutable state patterns as a design target (internal freedom to modernize representation is required)
+  - high-performance floating-point variants (reserved for later, once determinism is validated for fixed-point modes)
 
-  These are valid future expansions, but they should be layered in after the architecture's fundamental ownership and threading model is working.
+  Demo compatibility *is* a core goal (see goals section), but it is achieved through deterministic simulation, not through bit-identical reproduction of undefined behavior. The engine is free to use Rust's type system, modern math, and idiomatic patterns internally, provided external behavior is reproducible and correct for each chosen controller/complevel pair.
 
   ---
 
-  ## 7. Path to demo compatibility
+  ## 7. Demo compatibility (core goal)
 
-  Demo compatibility is not a rewrite of the architecture. It is a hardening of the simulation contract.
+  Demo compatibility is a first-class requirement achieved through deterministic simulation controllers, not a rewrite of the architecture.
 
-  The main requirement is to make the game state update as a pure function of deterministic per-tic input rather than ad hoc wall-clock events. This means:
+  The key insight is that **internal representation freedom and external determinism are compatible**. The engine is free to use floating-point physics, modern spatial structures, and idiomatic Rust patterns, provided that for a given simulation controller, the same input sequence always produces the same observable gameplay output.
 
-  - input is quantized to per-tic commands rather than raw asynchronous events
-  - simulation logic uses a canonical order of operations per tic
-  - randomness and state updates follow an explicit, reproducible sequence
-  - the renderer and audio layers remain decoupled and non-deterministic by design
+  ### 7.1 Determinism via simulation controller
 
-  The architecture already supports this direction because simulation, presentation, and audio are distinct actors and the sim actor owns the entire gameplay state.
+  Each simulation controller (e.g., `VanillaFixedPoint`, `MBF21FloatPerf`) is deterministic by construction: for a fixed RNG seed, input stream, and WAD, it always produces the same behavior. This is the foundation of demo playback.
 
-  ### 7.1 Input quantization
+  Controllers vary in:
+
+  - internal numeric representation (fixed-point vs floating-point)
+  - iteration order (deterministic vs unspecified)
+  - physics integration method
+  - ruleset semantics
+
+  But all controllers satisfy the same contract: **given identical input and initial state, produce identical output**.
+
+  ### 7.2 Input quantization
 
   The live input system may still poll devices in real time, but at each simulation tic it must convert current device state into a single canonical command object for the tic. This command is then fed into the sim actor as the authoritative input for that tick.
 
-  This is the key boundary that makes true replay/record compatibility possible without disturbing the rest of the engine.
-
-  ### 7.2 Deterministic simulation core
-
-  For compatibility-oriented work, the sim core should adopt stricter invariants:
-
-  - fixed-point math for positions, angles, and velocities
-  - canonical random number generation
-  - deterministic order for object iteration and special processing
-  - fixed phase order for gameplay rules and stat updates
-
-  This is a simulation-internal concern; it does not force the renderer or audio layer to become deterministic.
+  This is the key boundary that makes replay/record compatibility possible without disturbing the rest of the engine.
 
   ### 7.3 Demo file format
 
-  A dedicated demo module should encode:
+  A dedicated demo module encodes:
 
   - header metadata and version info
-  - selected ruleset or complevel
+  - simulation controller selector (complevel + perf_mode pair)
   - a stream of per-tic commands
 
-  This can be layered onto the engine once the sim is already consuming a stable command format.
+  When loading a demo, the engine instantiates the matching controller and feeds the stored command stream into it. If implementations are correct, the replay is bit-identical (fixed-point) or numerically equivalent (floating-point).
+
+  ### 7.4 External source-port compatibility
+
+  By matching demo formats and controller behavior from external ports (e.g., PrBoom+, MBF21 implementations), RSDoom can play and record demos in a cross-compatible manner. The controller abstraction makes this tractable: instead of a monolithic engine with scattered compatibility checks, each controller variant is independently testable against its canonical source-port reference.
 
   ---
 
-  ## 8. Path to Boom / MBF / MBF21 / id24 support
+  ## 8. Compatibility and performance modes
 
-  Historical source-port feature sets should be treated as a compatibility layer over a stable engine core, not as a rewrite of the architecture.
+  The engine supports both historical DOOM variant compatibility and high-performance simulation. These concerns are **orthogonal**: a given WAD may be played under any (complevel, perf_mode) pairing, and determinism is determined by both together, not one or the other.
 
-  ### 8.1 A compatibility layer (`sim::compat`)
+  ### 8.1 Simulation controller abstraction
 
-  Introduce a ruleset abstraction that selects behavior based on the target compatibility level. This could be modeled as:
+  Rather than scattering conditional branches across the simulation loop, the engine uses a strategy pattern: a single `SimulationController` trait object is instantiated at startup to encapsulate the entire (complevel, perf_mode) pair. This controller owns all behavior differences as concrete implementations with zero runtime branches on the hot path.
 
-  ```rust
-  enum Complevel {
-   Vanilla,
-   Boom,
-   Mbf,
-   Mbf21,
-   Id24,
-  }
+  Example structure:
+
+  ```
+  SimulationController (trait)
+  ├─ VanillaFixedPoint
+  ├─ VanillaFloatPerf
+  ├─ BoomFixedPoint
+  ├─ BoomFloatPerf
+  ├─ MBF21FixedPoint
+  ├─ MBF21FloatPerf
+  └─ [Id24 variants]
   ```
 
-  Then the engine can carry a per-run or per-demo compatibility configuration through the simulation subsystem. This is preferable to scattering `#[cfg]` branches across the codebase.
+  Each concrete controller encodes:
 
-  The compatibility layer should control:
+  - ruleset-specific special handling (linedef/sector/thing behavior)
+  - physics integration method (fixed-point arithmetic vs floating-point)
+  - object iteration order (deterministic vs unspecified)
+  - RNG behavior (vanilla seeding and sequence vs modern)
+  - compatibility quirks and edge cases
 
-  - special interpretation rules
-  - monster behavior changes
-  - gameplay quirks and edge-case semantics
-  - optional metadata interpretation from lumps or text files
+  The sim actor instantiates one controller at level load time based on the selected complevel and performance mode, and the main loop calls methods on that controller without branching. The choice is made once and paid for once; subsequent ticks are monomorphic.
 
-  ### 8.2 Data-model extensions
+  ### 8.2 Demo metadata and external source-port compatibility
 
-  Historical variants increase the amount of metadata and behavior the engine can parse, but they do not need to change the actor topology. They fit naturally into:
+  Every demo encodes a (complevel, perf_mode) pair in its header. This makes demos reproducible and makes it possible to play back demos recorded by other source ports with the correct behavior:
+
+  - A Boom-era demo implicitly specifies (Boom, FixedPoint) behavior
+  - An external port's high-perf demo might specify (MBF21, FloatPerf)
+  - A vanilla demo specifies (Vanilla, FixedPoint)
+
+  When loading a demo or establishing a new level under a given configuration, the engine instantiates the matching controller. This guarantees that the simulation behaves identically across replays and across ports, provided all controller implementations are correct.
+
+  ### 8.3 Data-model extensions
+
+  Historical variants increase the metadata and behavior the engine can parse, but they do not change the actor topology. They fit into:
 
   - raw WAD parsing and conversion layers
-  - ruleset-aware special interpretation in the sim actor
-  - optional metadata carried in the shared domain model or snapshot where the renderer needs it
+  - ruleset-aware special interpretation within the chosen controller
+  - optional metadata in the shared domain model or snapshot where the renderer needs it
 
   Examples:
 
@@ -415,17 +429,39 @@
   - DeHackEd and MAPINFO-style metadata variants
   - alternate node formats normalized into a single domain representation
 
-  The important part is that these stay in the loader/ruleset code paths rather than becoming new fundamental subsystems.
+  The critical design rule: all behavior variation is encapsulated in the controller. Other subsystems (renderer, audio, menu, input) do not need to know or care which variant is active.
 
-  ### 8.3 Recommended sequencing
+  ### 8.4 Implications for testing
+
+  The strategy pattern creates clear testing boundaries:
+
+  - **Unit tests for each controller**: Each concrete controller has its own test suite validating its specific behavior. A test for `BoomFloatPerf` exercises only that variant's code path without branches or pollution from others.
+  - **Determinism validation**: Record the same input stream against two instances of the same controller and verify bit-exact match (fixed-point) or close match (floating-point, after accounting for rounding). This validates that a given controller is truly deterministic.
+  - **Cross-variant regression**: Play the same simple test level (e.g., E1M1 with scripted player input) under each controller and record traces. These traces will differ legitimately, but should remain stable for their respective controllers.
+  - **External demo compatibility**: Collect test demos from canonical source ports (PrBoom+, MBF21 ports, etc.). When running under the matching controller, verify that the engine produces the same output sequence or stays within acceptable tolerances (floating-point).
+  - **No monomorphization fallback**: Each controller must have *at least one* test case that exercises its code path. If a controller is never tested, it is dead code.
+
+  ### 8.5 Cache efficiency
+
+  By instantiating a single controller and calling through its methods, the engine avoids:
+
+  - Per-frame conditional branches on complevel or perf mode
+  - Register pressure from condition codes and branch prediction state
+  - Cache pollution from code paths not taken
+
+  Modern CPU predictors handle indirect (vtable) calls efficiently after a few iterations of the main loop, so the cost is minimal once the call pattern is learned. The trade-off is that controller implementations cannot be inline-optimized as easily, but the monomorphic code within each implementation remains very optimizable.
+
+  ### 8.6 Recommended sequencing
 
   If the project later adds compatibility work, the natural order is:
 
-  1. define a stable per-tic command structure and make simulation consume it
-  2. migrate the sim core to fixed-point math and canonical RNG behavior
-  3. verify vanilla deterministic behavior first
-  4. layer in Boom, MBF, and MBF21 rulesets incrementally
-  5. treat id24 as an ongoing compatibility target rather than a prerequisite for the core architecture
+  1. implement the simulation controller abstraction with a single `VanillaFixedPoint` impl
+  2. define a stable per-tic command structure and make simulation consume it
+  3. verify vanilla deterministic behavior with scripted input and recorded traces
+  4. add `VanillaFloatPerf` as the first performance variant, validating it plays the same WADs
+  5. layer in Boom, MBF, and MBF21 rulesets (both fixed-point and performance variants)
+  6. collect and test against external source-port demos for cross-port compatibility
+  7. treat id24 as an ongoing compatibility target rather than a prerequisite
 
   ---
 
