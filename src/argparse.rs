@@ -101,19 +101,15 @@ impl CliArgs {
             let warp_arg1 = warp_arg1
                 .parse::<u16>()
                 .map_err(|_| format!("Invalid number after -warp: {warp_arg1}"))?;
-            if warp_arg1 == 0 || warp_arg1 > 99 {
-                return Err(format!(
-                    "Map number must be between 1 and 99, got: {warp_arg1}"
-                ));
+            if warp_arg1 == 0 {
+                return Err("Map number must be non-zero".to_string());
             }
             args.remove(pos);
             if let Some(s) = args.get(pos) {
                 if let Ok(warp_arg2) = s.parse::<u16>() {
                     args.remove(pos);
-                    if warp_arg2 == 0 || warp_arg2 > 9 {
-                        return Err(format!(
-                            "Episode number must be between 1 and 9, got: {warp_arg2}"
-                        ));
+                    if warp_arg2 == 0 {
+                        return Err("Episode number must be non-zero".to_string());
                     }
                     cli_args.warp = Some(Warp::Episode(warp_arg1, warp_arg2));
                 } else if s.starts_with('-') {
@@ -306,17 +302,7 @@ mod test {
         let cli_args = CliArgs::parse_args(&mut args);
         assert_eq!(
             cli_args,
-            Err("Map number must be between 1 and 99, got: 0".to_string())
-        );
-    }
-
-    #[test]
-    fn warp_map_with_big_number_gives_error() {
-        let mut args = vec!["-warp".to_string(), "100".to_string()];
-        let cli_args = CliArgs::parse_args(&mut args);
-        assert_eq!(
-            cli_args,
-            Err("Map number must be between 1 and 99, got: 100".to_string())
+            Err("Map number must be non-zero".to_string())
         );
     }
 
@@ -373,17 +359,7 @@ mod test {
         let cli_args = CliArgs::parse_args(&mut args);
         assert_eq!(
             cli_args,
-            Err("Episode number must be between 1 and 9, got: 0".to_string())
-        );
-    }
-
-    #[test]
-    fn warp_episode_with_big_number_gives_error() {
-        let mut args = vec!["-warp".to_string(), "1".to_string(), "10".to_string()];
-        let cli_args = CliArgs::parse_args(&mut args);
-        assert_eq!(
-            cli_args,
-            Err("Episode number must be between 1 and 9, got: 10".to_string())
+            Err("Episode number must be non-zero".to_string())
         );
     }
 
