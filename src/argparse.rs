@@ -300,10 +300,7 @@ mod test {
     fn warp_map_with_small_number_gives_error() {
         let mut args = vec!["-warp".to_string(), "0".to_string()];
         let cli_args = CliArgs::parse_args(&mut args);
-        assert_eq!(
-            cli_args,
-            Err("Map number must be non-zero".to_string())
-        );
+        assert_eq!(cli_args, Err("Map number must be non-zero".to_string()));
     }
 
     #[test]
@@ -357,10 +354,7 @@ mod test {
     fn warp_episode_with_small_number_gives_error() {
         let mut args = vec!["-warp".to_string(), "1".to_string(), "0".to_string()];
         let cli_args = CliArgs::parse_args(&mut args);
-        assert_eq!(
-            cli_args,
-            Err("Episode number must be non-zero".to_string())
-        );
+        assert_eq!(cli_args, Err("Episode number must be non-zero".to_string()));
     }
 
     #[test]
