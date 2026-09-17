@@ -308,9 +308,11 @@ pub fn patch_wad(wad: &mut WadView, patch_wad: &WadView) {
             continue;
         }
 
-        if let Some(existing) = wad.lumps.iter_mut().find(|l| {
-            l.name == patch_lump.name && l.namespace == patch_lump.namespace
-        }) {
+        if let Some(existing) = wad
+            .lumps
+            .iter_mut()
+            .find(|l| l.name == patch_lump.name && l.namespace == patch_lump.namespace)
+        {
             existing.raw_data.clone_from(&patch_lump.raw_data);
             existing.source_type = patch_lump.source_type;
         } else {

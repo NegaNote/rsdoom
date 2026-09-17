@@ -5,9 +5,9 @@
 
 use rsdoom::wad::builder::WadBuilder;
 use rsdoom::wad::raw::WadType;
+use std::fs;
 use std::fs::File;
 use std::io::{self, Write};
-use std::fs;
 use std::path::Path;
 
 fn to_io_error(_e: rsdoom::wad::builder::LumpNameError) -> io::Error {
@@ -62,7 +62,6 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-
 // ============================================================================
 // VALID WAD FILES
 // ============================================================================
@@ -79,15 +78,23 @@ fn create_valid_empty_pwad(dir: &Path) -> io::Result<()> {
 
 fn create_valid_single_lump(dir: &Path) -> io::Result<()> {
     let mut builder = WadBuilder::new(WadType::Pwad);
-    builder.add_lump("HELLO", b"HELLO WAD".to_vec()).map_err(to_io_error)?;
+    builder
+        .add_lump("HELLO", b"HELLO WAD".to_vec())
+        .map_err(to_io_error)?;
     builder.write_to_file(dir.join("valid_single_lump.wad"))
 }
 
 fn create_valid_multiple_lumps(dir: &Path) -> io::Result<()> {
     let mut builder = WadBuilder::new(WadType::Iwad);
-    builder.add_lump("LUMPONE", b"ONE".to_vec()).map_err(to_io_error)?;
-    builder.add_lump("LUMPTWO", b"TWO-TWO".to_vec()).map_err(to_io_error)?;
-    builder.add_lump("LUMPTHR", b"THREE".to_vec()).map_err(to_io_error)?;
+    builder
+        .add_lump("LUMPONE", b"ONE".to_vec())
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("LUMPTWO", b"TWO-TWO".to_vec())
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("LUMPTHR", b"THREE".to_vec())
+        .map_err(to_io_error)?;
     builder.write_to_file(dir.join("valid_multiple_lumps.wad"))
 }
 
@@ -99,7 +106,9 @@ fn create_valid_empty_lump(dir: &Path) -> io::Result<()> {
 
 fn create_valid_null_padded_name(dir: &Path) -> io::Result<()> {
     let mut builder = WadBuilder::new(WadType::Pwad);
-    builder.add_lump("PLAYPAL", b"palette".to_vec()).map_err(to_io_error)?;
+    builder
+        .add_lump("PLAYPAL", b"palette".to_vec())
+        .map_err(to_io_error)?;
     builder.write_to_file(dir.join("valid_null_padded_name.wad"))
 }
 
@@ -394,14 +403,16 @@ fn create_sprite_override(dir: &Path) -> io::Result<()> {
     // IWAD with one sprite
     let mut iwad = WadBuilder::new(WadType::Iwad);
     iwad.add_empty_lump("S_START").map_err(to_io_error)?;
-    iwad.add_lump("TROOPY", vec![0x01; 16]).map_err(to_io_error)?;
+    iwad.add_lump("TROOPY", vec![0x01; 16])
+        .map_err(to_io_error)?;
     iwad.add_empty_lump("S_END").map_err(to_io_error)?;
     iwad.write_to_file(dir.join("iwad_sprites.wad"))?;
 
     // PWAD that overrides the sprite
     let mut pwad = WadBuilder::new(WadType::Pwad);
     pwad.add_empty_lump("S_START").map_err(to_io_error)?;
-    pwad.add_lump("TROOPY", vec![0x02; 16]).map_err(to_io_error)?;
+    pwad.add_lump("TROOPY", vec![0x02; 16])
+        .map_err(to_io_error)?;
     pwad.add_empty_lump("S_END").map_err(to_io_error)?;
     pwad.write_to_file(dir.join("pwad_sprite_override.wad"))?;
 
@@ -459,34 +470,82 @@ fn create_marked_lumps(dir: &Path) -> io::Result<()> {
 
 /// Create a Doom 2 format map with marker + 11 lumps
 fn create_doom2_map(builder: &mut WadBuilder, map_name: &str, byte_val: u8) -> io::Result<()> {
-    builder.add_lump(map_name, Vec::new()).map_err(to_io_error)?;
-    builder.add_lump("THINGS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("LINEDEFS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("SIDEDEFS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("VERTEXES", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("SEGS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("SSECTORS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("NODES", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("SECTORS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("REJECT", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("BLOCKMAP", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("BEHAVIOR", vec![byte_val; 4]).map_err(to_io_error)?;
+    builder
+        .add_lump(map_name, Vec::new())
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("THINGS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("LINEDEFS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("SIDEDEFS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("VERTEXES", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("SEGS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("SSECTORS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("NODES", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("SECTORS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("REJECT", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("BLOCKMAP", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("BEHAVIOR", vec![byte_val; 4])
+        .map_err(to_io_error)?;
     Ok(())
 }
 
 /// Create a Doom 1 format map with marker + 11 lumps
 fn create_doom1_map_lump(builder: &mut WadBuilder, map_name: &str, byte_val: u8) -> io::Result<()> {
-    builder.add_lump(map_name, Vec::new()).map_err(to_io_error)?;
-    builder.add_lump("THINGS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("LINEDEFS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("SIDEDEFS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("VERTEXES", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("SEGS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("SSECTORS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("NODES", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("SECTORS", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("REJECT", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("BLOCKMAP", vec![byte_val; 4]).map_err(to_io_error)?;
-    builder.add_lump("BEHAVIOR", vec![byte_val; 4]).map_err(to_io_error)?;
+    builder
+        .add_lump(map_name, Vec::new())
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("THINGS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("LINEDEFS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("SIDEDEFS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("VERTEXES", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("SEGS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("SSECTORS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("NODES", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("SECTORS", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("REJECT", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("BLOCKMAP", vec![byte_val; 4])
+        .map_err(to_io_error)?;
+    builder
+        .add_lump("BEHAVIOR", vec![byte_val; 4])
+        .map_err(to_io_error)?;
     Ok(())
 }

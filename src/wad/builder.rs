@@ -111,20 +111,20 @@ impl WadBuilder {
         header.extend_from_slice(type_str.as_bytes());
 
         // Number of lumps (4 bytes, little-endian u32)
-        let num_lumps = u32::try_from(self.lumps.len())
-            .map_err(|_| std::io::Error::new(
+        let num_lumps = u32::try_from(self.lumps.len()).map_err(|_| {
+            std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "WAD file has too many lumps",
-            ))?;
+            )
+        })?;
         header.extend_from_slice(&num_lumps.to_le_bytes());
 
         // Offset to info table (4 bytes, little-endian u32)
         // Info table comes after all lump data
-        let info_table_offset = u32::try_from(12 + self.get_total_lump_data_size())
-            .map_err(|_| std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "WAD file is too large",
-            ))?;
+        let info_table_offset =
+            u32::try_from(12 + self.get_total_lump_data_size()).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "WAD file is too large")
+            })?;
         header.extend_from_slice(&info_table_offset.to_le_bytes());
 
         Ok(header)
@@ -137,16 +137,18 @@ impl WadBuilder {
 
         for entry in &self.lumps {
             // Record where this lump's data starts
-            let offset = u32::try_from(current_offset)
-                .map_err(|_| std::io::Error::new(
+            let offset = u32::try_from(current_offset).map_err(|_| {
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "Lump offset exceeds u32 bounds",
-                ))?;
-            let size = u32::try_from(entry.data.len())
-                .map_err(|_| std::io::Error::new(
+                )
+            })?;
+            let size = u32::try_from(entry.data.len()).map_err(|_| {
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "Lump size exceeds u32 bounds",
-                ))?;
+                )
+            })?;
 
             // Add the lump data
             lump_data.extend_from_slice(&entry.data);
