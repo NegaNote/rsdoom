@@ -1,7 +1,8 @@
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
+use std::str::FromStr;
 use thiserror::Error;
 use usize_conv::ToUsize;
 use winnow::Result;
@@ -12,38 +13,51 @@ use winnow::token::{literal, take};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct WadView {
-    lumps: Vec<(LumpName, Lump)>,
+    lumps: Vec<Lump>,
 }
 
 impl WadView {
     #[must_use]
     pub fn get_lump_by_name(&self, name: LumpName) -> Option<&Lump> {
-        self.lumps
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, lump)| lump)
+        self.lumps.iter().find(|lump| lump.name == name)
+    }
+
+    #[must_use]
+    pub fn get_lump_by_str_name(&self, name: &str) -> Option<&Lump> {
+        let lump_name = LumpName::from_str(name).ok()?;
+        self.get_lump_by_name(lump_name)
     }
 
     #[must_use]
     pub fn get_lumps_by_name(&self, name: LumpName) -> Vec<&Lump> {
-        self.lumps
-            .iter()
-            .filter(|(n, _)| *n == name)
-            .map(|(_, lump)| lump)
-            .collect()
+        self.lumps.iter().filter(|lump| lump.name == name).collect()
     }
 
     #[must_use]
     pub fn get_lump_at(&self, index: usize) -> Option<&Lump> {
-        self.lumps.get(index).map(|(_, lump)| lump)
+        self.lumps.get(index)
+    }
+
+    pub fn get_lumps_between(
+        &self,
+        start_marker: LumpName,
+        end_marker: LumpName,
+    ) -> impl Iterator<Item = &Lump> {
+        self.lumps
+            .iter()
+            .skip_while(move |lump| lump.name != start_marker)
+            .skip(1) // Skip the start marker itself
+            .take_while(move |lump| start_marker != end_marker && lump.name != end_marker)
     }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[repr(transparent)]
 pub struct LumpName([u8; 8]);
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Lump {
+    name: LumpName,
     raw_data: Vec<u8>,
 }
 
@@ -58,7 +72,7 @@ impl Lump {
 pub struct LumpNameError;
 
 impl Display for LumpNameError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Invalid lump name")
     }
 }
@@ -67,19 +81,68 @@ impl TryFrom<[u8; 8]> for LumpName {
     type Error = LumpNameError;
 
     fn try_from(value: [u8; 8]) -> Result<Self, Self::Error> {
-        if let Some(pos) = value.iter().position(|&b| b == 0) {
-            // If there's a null byte, check that all bytes after it are also null and that all bytes before it are ASCII graphic characters.
-            if let Some((slice1, slice2)) = value.split_at_checked(pos)
-                && let Some(slice3) = slice2.get(1..)
-                && (slice3.iter().any(|&b| b != 0) || slice1.iter().any(|&b| !b.is_ascii_graphic()))
-            {
-                return Err(LumpNameError);
-            }
-        } else if value.iter().any(|&b| !b.is_ascii_graphic()) {
-            // Otherwise just make sure all bytes are ASCII graphic characters.
+        let valid = value.iter().position(|&byte| byte == 0).map_or_else(
+            || value.iter().all(u8::is_ascii),
+            |null_pos| {
+                null_pos != 0
+                    && value.iter().take(null_pos).all(u8::is_ascii)
+                    && value.iter().skip(null_pos + 1).all(|&b| b == 0)
+            },
+        );
+
+        if !valid {
             return Err(LumpNameError);
         }
+
         Ok(Self(value))
+    }
+}
+
+impl LumpName {
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 8] {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.iter().position(|&b| b == 0).map_or_else(
+            || {
+                // SAFETY: The invariant of LumpName ensures that all bytes are ASCII graphic characters if there are no zero bytes.
+                unsafe { std::str::from_utf8_unchecked(&self.0) }
+            },
+            |pos| {
+                // SAFETY: The invariant of LumpName ensures that all bytes before the first zero byte are ASCII graphic characters.
+                unsafe { std::str::from_utf8_unchecked(self.0.get_unchecked(..pos)) }
+            },
+        )
+    }
+}
+
+impl FromStr for LumpName {
+    type Err = LumpNameError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() > 8 || !s.is_ascii() {
+            return Err(LumpNameError);
+        }
+
+        let mut bytes = [0u8; 8];
+        if s.len() == 8 {
+            bytes.copy_from_slice(s.as_bytes());
+        } else {
+            bytes
+                .get_mut(..s.len())
+                .unwrap_or_default()
+                .copy_from_slice(s.as_bytes());
+        }
+        Self::try_from(bytes)
+    }
+}
+
+impl Display for LumpName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -132,13 +195,16 @@ pub fn load_wad(path: PathBuf) -> Result<WadView, WadLoadingError> {
         lump_infos.push(lump_info);
     }
 
-    let mut lumps: Vec<(LumpName, Lump)> = Vec::with_capacity(lump_infos.len());
+    let mut lumps: Vec<Lump> = Vec::with_capacity(lump_infos.len());
 
     for lump_info in lump_infos {
         wad_file.seek(SeekFrom::Start(u64::from(lump_info.offset)))?;
         let mut raw_data = vec![0u8; lump_info.size.to_usize()];
         wad_file.read_exact(&mut raw_data)?;
-        lumps.push((lump_info.name, Lump { raw_data }));
+        lumps.push(Lump {
+            name: lump_info.name,
+            raw_data,
+        });
     }
 
     Ok(WadView { lumps })
