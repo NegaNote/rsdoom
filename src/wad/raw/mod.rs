@@ -11,7 +11,7 @@ use winnow::combinator::alt;
 use winnow::prelude::*;
 use winnow::token::{literal, take};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct WadView {
     lumps: Vec<Lump>,
 }
@@ -51,8 +51,22 @@ impl WadView {
     }
 
     #[must_use]
+    pub fn get_lump_by_str_name_and_namespace(&self, name: &str, namespace: Namespace) -> Option<&Lump> {
+        let lump_name = LumpName::from_str(name).ok()?;
+        self.lumps
+            .iter()
+            .find(|lump| lump.name == lump_name && lump.namespace == namespace)
+    }
+
+    #[must_use]
     pub fn get_lump_at(&self, index: usize) -> Option<&Lump> {
         self.lumps.get(index)
+    }
+
+    #[must_use]
+    pub fn get_lump_index_by_str_name(&self, name: &str) -> Option<usize> {
+        let lump_name = LumpName::from_str(name).ok()?;
+        self.lumps.iter().position(|lump| lump.name == lump_name)
     }
 
     pub fn get_lumps_between(

@@ -406,6 +406,8 @@ fn create_sprite_override(dir: &Path) -> io::Result<()> {
     iwad.add_lump("TROOPY", vec![0x01; 16])
         .map_err(to_io_error)?;
     iwad.add_empty_lump("S_END").map_err(to_io_error)?;
+    iwad.add_lump("PLAYPAL", vec![0x01; 8])
+        .map_err(to_io_error)?;
     iwad.write_to_file(dir.join("iwad_sprites.wad"))?;
 
     // PWAD that overrides the sprite
@@ -426,14 +428,14 @@ fn create_multi_namespace(dir: &Path) -> io::Result<()> {
     iwad.add_lump("DOOM", vec![0x01; 8]).map_err(to_io_error)?;
     iwad.add_empty_lump("S_END").map_err(to_io_error)?;
     iwad.add_empty_lump("F_START").map_err(to_io_error)?;
-    iwad.add_lump("DOOM", vec![0x01; 8]).map_err(to_io_error)?;
+    iwad.add_lump("DOOM", vec![0x02; 8]).map_err(to_io_error)?;
     iwad.add_empty_lump("F_END").map_err(to_io_error)?;
     iwad.write_to_file(dir.join("iwad_multi_namespace.wad"))?;
 
     // PWAD that overrides only the sprite version
     let mut pwad = WadBuilder::new(WadType::Pwad);
     pwad.add_empty_lump("S_START").map_err(to_io_error)?;
-    pwad.add_lump("DOOM", vec![0x02; 8]).map_err(to_io_error)?;
+    pwad.add_lump("DOOM", vec![0x03; 8]).map_err(to_io_error)?;
     pwad.add_empty_lump("S_END").map_err(to_io_error)?;
     pwad.write_to_file(dir.join("pwad_sprite_same_name.wad"))?;
 
