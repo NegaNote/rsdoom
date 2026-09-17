@@ -2,12 +2,13 @@ use super::*;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
         .join("test_wads")
         .join(name)
 }
 
 fn load_fixture(name: &str) -> Result<WadView, WadLoadingError> {
-    load_wad(fixture(name))
+    load_wad(fixture(name), WadType::Iwad)
 }
 
 fn load_fixture_for_test(name: &str) -> Option<WadView> {
@@ -268,18 +269,26 @@ mod wad_view {
                 Lump {
                     name: LumpName(*b"START\0\0\0"),
                     raw_data: b"start".to_vec(),
+                    source_type: WadType::Iwad,
+                    namespace: Namespace::Global,
                 },
                 Lump {
                     name: LumpName(*b"FIRST\0\0\0"),
                     raw_data: b"first".to_vec(),
+                    source_type: WadType::Iwad,
+                    namespace: Namespace::Global,
                 },
                 Lump {
                     name: LumpName(*b"END\0\0\0\0\0"),
                     raw_data: b"end".to_vec(),
+                    source_type: WadType::Iwad,
+                    namespace: Namespace::Global,
                 },
                 Lump {
                     name: LumpName(*b"SECOND\0\0"),
                     raw_data: b"second".to_vec(),
+                    source_type: WadType::Iwad,
+                    namespace: Namespace::Global,
                 },
             ],
         }
@@ -504,12 +513,12 @@ mod load_wad_success {
 
     #[test]
     fn loads_freedoom1() {
-        assert!(load_fixture_for_test("../freedoom1.wad").is_some());
+        assert!(load_fixture_for_test("../../freedoom1.wad").is_some());
     }
 
     #[test]
     fn loads_freedoom2() {
-        assert!(load_fixture_for_test("../freedoom2.wad").is_some());
+        assert!(load_fixture_for_test("../../freedoom2.wad").is_some());
     }
 }
 
