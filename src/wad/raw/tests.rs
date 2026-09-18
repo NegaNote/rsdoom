@@ -10,7 +10,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn load_fixture(name: &str) -> Result<WadView, WadLoadingError> {
-    load_wad(fixture(name), WadType::Iwad)
+    load_wad(&fixture(name), WadType::Iwad)
 }
 
 fn load_fixture_for_test(name: &str) -> Option<WadView> {
@@ -656,17 +656,29 @@ mod patch_wads {
 
         patch_wad(&mut wad, &pwad);
         assert_eq!(wad.lumps.len(), 4);
-        let patch_sprite_lump = pwad.get_lump_by_str_name_and_namespace("TROOPY", Namespace::Sprites).unwrap();
-        let patched_sprite_lump = wad.get_lump_by_str_name_and_namespace("TROOPY", Namespace::Sprites);
+        let patch_sprite_lump = pwad
+            .get_lump_by_str_name_and_namespace("TROOPY", Namespace::Sprites)
+            .unwrap();
+        let patched_sprite_lump =
+            wad.get_lump_by_str_name_and_namespace("TROOPY", Namespace::Sprites);
         assert!(patched_sprite_lump.is_some());
         let patched_sprite_lump = patched_sprite_lump.unwrap();
-        assert_eq!(patched_sprite_lump.get_raw_data(), patch_sprite_lump.get_raw_data());
+        assert_eq!(
+            patched_sprite_lump.get_raw_data(),
+            patch_sprite_lump.get_raw_data()
+        );
 
-        let iwad_playpal_lump = iwad.get_lump_by_str_name_and_namespace("PLAYPAL", Namespace::Global).unwrap();
-        let patched_playpal_lump = wad.get_lump_by_str_name_and_namespace("PLAYPAL", Namespace::Global);
+        let iwad_playpal_lump = iwad
+            .get_lump_by_str_name_and_namespace("PLAYPAL", Namespace::Global)
+            .unwrap();
+        let patched_playpal_lump =
+            wad.get_lump_by_str_name_and_namespace("PLAYPAL", Namespace::Global);
         assert!(patched_playpal_lump.is_some());
         let patched_playpal_lump = patched_playpal_lump.unwrap();
-        assert_eq!(patched_playpal_lump.get_raw_data(), iwad_playpal_lump.get_raw_data());
+        assert_eq!(
+            patched_playpal_lump.get_raw_data(),
+            iwad_playpal_lump.get_raw_data()
+        );
     }
 
     #[test]
@@ -729,7 +741,8 @@ mod patch_wads {
         assert!(pwad_sprites_doom.is_some());
         let pwad_sprites_doom = pwad_sprites_doom.unwrap();
 
-        let patched_sprites_doom = wad.get_lump_by_str_name_and_namespace("DOOM", Namespace::Sprites);
+        let patched_sprites_doom =
+            wad.get_lump_by_str_name_and_namespace("DOOM", Namespace::Sprites);
         assert!(patched_sprites_doom.is_some());
         let patched_sprites_doom = patched_sprites_doom.unwrap();
         assert_eq!(

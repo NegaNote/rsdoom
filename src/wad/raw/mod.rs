@@ -51,7 +51,11 @@ impl WadView {
     }
 
     #[must_use]
-    pub fn get_lump_by_str_name_and_namespace(&self, name: &str, namespace: Namespace) -> Option<&Lump> {
+    pub fn get_lump_by_str_name_and_namespace(
+        &self,
+        name: &str,
+        namespace: Namespace,
+    ) -> Option<&Lump> {
         let lump_name = LumpName::from_str(name).ok()?;
         self.lumps
             .iter()
@@ -217,7 +221,7 @@ pub enum WadLoadingError {
 
 /// # Errors
 /// Will error out on missing file or on errors parsing the WAD file.
-pub fn load_wad(path: PathBuf, wad_type: WadType) -> Result<WadView, WadLoadingError> {
+pub fn load_wad(path: &PathBuf, wad_type: WadType) -> Result<WadView, WadLoadingError> {
     let mut wad_file: File = File::open(path).map_err(WadLoadingError::CouldntReadFile)?;
     wad_file.seek(SeekFrom::Start(0))?;
     let mut header_bytes = [0u8; 12];

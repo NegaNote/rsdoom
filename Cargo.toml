@@ -3,6 +3,7 @@ name = "rsdoom"
 version = "0.1.0"
 edition = "2024"
 license="GPL-2.0-only"
+default-run = "rsdoom"
 
 [dependencies]
 bytemuck = "1.25"

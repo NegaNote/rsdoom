@@ -3,6 +3,7 @@ use log::{error, info};
 use std::process::ExitCode;
 
 use rsdoom::argparse;
+use rsdoom::wad::raw::{WadType, load_wad, patch_wad};
 use sdl3::{event::Event, keyboard::Keycode, pixels::Color};
 use simple_logger::SimpleLogger;
 use std::{
@@ -46,7 +47,30 @@ fn main() -> ExitCode {
         }
     };
 
-    dbg!(&cli_args);
+    let wad_result = load_wad(&cli_args.iwad_path, WadType::Iwad);
+    let mut wad = match wad_result {
+        Ok(wad) => {
+            info!("Loaded IWAD file: {}", cli_args.iwad_path.display());
+            wad
+        }
+        Err(err) => {
+            error!("Failed to load WAD file: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    for pwad_path in &cli_args.pwad_paths {
+        match load_wad(pwad_path, WadType::Pwad) {
+            Ok(pwad) => {
+                info!("Loaded PWAD file: {}", pwad_path.display());
+                patch_wad(&mut wad, &pwad);
+            }
+            Err(err) => {
+                error!("Failed to load PWAD file {}: {err}", pwad_path.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    }
 
     let Ok(sdl_context) = sdl3::init() else {
         error!("Could not initialize SDL3");
