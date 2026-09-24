@@ -47,6 +47,7 @@ pub struct PaletteError {
     pub length: usize,
 }
 
+#[derive(Debug)]
 pub struct Palette {
     colors: [PaletteColor; 256],
 }
@@ -85,6 +86,36 @@ impl Palette {
         unsafe {
             *self.colors.get_unchecked_mut(index.0.to_usize()) = color;
         }
+    }
+}
+
+pub struct DoomPalettes {
+    palettes: [Palette; 14],
+}
+
+impl DoomPalettes {
+    #[must_use]
+    pub fn get_palette(&self, index: usize) -> Option<&Palette> {
+        self.palettes.get(index)
+    }
+
+    /// # Errors
+    /// Returns `PaletteError` if the input slice does not have a length of 14 * 256 * 3 bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PaletteError> {
+        if bytes.len() != 14 * 256 * 3 {
+            return Err(PaletteError {
+                length: bytes.len(),
+            });
+        }
+        let mut palettes_vec = Vec::with_capacity(14);
+        for chunk in bytes.as_chunks::<768>().0 {
+            palettes_vec.push(Palette::from_bytes(chunk)?);
+        }
+        Ok(Self {
+            palettes: palettes_vec.try_into().map_err(|_| PaletteError {
+                length: bytes.len(),
+            })?,
+        })
     }
 }
 
@@ -210,7 +241,7 @@ impl Patch {
         let width = self.columns.len();
         let height = self.height.to_usize();
         let mut grid: Grid<Option<PaletteIndex>> =
-            Grid::init_with_order(width, height, Order::ColumnMajor, None);
+            Grid::init_with_order(height, width, Order::ColumnMajor, None);
 
         self.columns.iter().enumerate().for_each(|(x, column)| {
             let mut prev_y_start: Option<usize> = None;
@@ -231,5 +262,99 @@ impl Patch {
         });
 
         grid
+    }
+}
+
+pub struct RawScreen {
+    pixels: Grid<PaletteIndex>,
+}
+
+impl RawScreen {
+    /// # Errors
+    /// Returns an error if the input slice does not have a length of 320 * 200 bytes.
+    pub fn new(bytes: &[u8]) -> Result<Self, RawScreenError> {
+        if bytes.len() != 320 * 200 {
+            return Err(RawScreenError {
+                message: format!(
+                    "Invalid raw screen data length: expected {}, got {}",
+                    320 * 200,
+                    bytes.len()
+                ),
+            });
+        }
+
+        let pixels = Grid::from_vec_with_order(
+            bytes.iter().copied().map(PaletteIndex).collect(),
+            320,
+            Order::RowMajor,
+        );
+
+        Ok(Self { pixels })
+    }
+
+    #[must_use]
+    pub fn as_pixel_data(&self) -> Grid<Option<PaletteIndex>> {
+        Grid::from_vec_with_order(
+            self.pixels.iter().map(|&pixel| Some(pixel)).collect(),
+            320,
+            Order::RowMajor,
+        )
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("Raw screen error: {message}")]
+pub struct RawScreenError {
+    message: String,
+}
+
+pub enum RawGfxAsset {
+    Patch(Patch),
+    RawScreen(Box<RawScreen>),
+}
+
+pub enum RawGfxAssetError {
+    PatchError(PatchError),
+    RawScreenError(RawScreenError),
+}
+
+impl RawGfxAsset {
+    /// # Errors
+    /// Returns an error if the input bytes are invalid for the specified asset type.
+    pub fn new(bytes: &[u8]) -> Result<Self, RawGfxAssetError> {
+        if bytes.len() == 320 * 200 {
+            RawScreen::new(bytes)
+                .map(|screen| Self::RawScreen(Box::new(screen)))
+                .map_err(RawGfxAssetError::RawScreenError)
+        } else {
+            Patch::new(bytes)
+                .map(Self::Patch)
+                .map_err(RawGfxAssetError::PatchError)
+        }
+    }
+
+    #[must_use]
+    pub fn as_pixel_data(&self) -> Grid<Option<PaletteIndex>> {
+        match self {
+            Self::Patch(patch) => patch.as_pixel_data(),
+            Self::RawScreen(screen) => screen.as_pixel_data(),
+        }
+    }
+}
+
+pub struct GfxAsset {
+    pixel_data: Grid<Option<PaletteIndex>>,
+}
+
+impl GfxAsset {
+    #[must_use]
+    pub const fn new(pixels: Grid<Option<PaletteIndex>>) -> Self {
+        Self { pixel_data: pixels }
+    }
+}
+
+impl From<RawGfxAsset> for GfxAsset {
+    fn from(raw: RawGfxAsset) -> Self {
+        Self::new(raw.as_pixel_data())
     }
 }

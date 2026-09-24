@@ -66,6 +66,7 @@ fn accepts_valid_skill_boundaries(#[case] value: &str, #[case] expected: u8) {
 #[case("6")]
 #[case("255")]
 #[case("-1")]
+#[case("0")]
 #[case("256")]
 fn rejects_invalid_skill_boundaries(#[case] value: &str) {
     let mut args = vec!["-skill".into(), value.into()];
