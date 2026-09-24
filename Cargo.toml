@@ -7,12 +7,15 @@ default-run = "rsdoom"
 
 [dependencies]
 bytemuck = "1.25"
-itertools = "0.15.0"
+grid = "1.0"
+itertools = "0.15"
 log = { version = "0.4", features = ["release_max_level_warn", "max_level_debug", "kv", "kv_serde", "std"] }
+rayon = "1.12"
 sdl3 = { version = "0.20", features = ["static-link", "build-from-source", "raw-window-handle"] }
-simple_logger = { version = "5.2.0", features = ["threads"] }
-thiserror = "2.0.20"
-usize-conv = { version = "0.1.1", features = ["min-usize-64"] }
+simple_logger = { version = "5.2", features = ["threads"] }
+thiserror = "2.0"
+truncate-integer = "0.5"
+usize-conv = { version = "0.1", features = ["min-usize-64"] }
 wgpu = "30.0"
 winnow = "1.0"
 

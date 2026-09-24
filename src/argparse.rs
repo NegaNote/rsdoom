@@ -23,9 +23,9 @@ pub struct CliArgs {
 }
 
 const HELP: &str = r#"RSDoom - A Doom engine written in Rust
-Usage: rsdoom [-iwad <path>] [-pwad <path1> <path2> ...] [-nomonsters] [-deathmatch] [-fast] [-warp <map>] [-respawn] [-skill <level>]
+Usage: rsdoom [-iwad <path>] [-file <path1> <path2> ...] [-nomonsters] [-deathmatch] [-fast] [-warp <map>] [-respawn] [-skill <level>]
     -iwad <path>               Path to the IWAD file (defaults to "freedoom2.wad" in the current directory)
-    -pwad <path1> <path2> ...  Paths to PWAD files (only supports one group of PWADs, will load in order)
+    -file <path1> <path2> ...  Paths to PWAD files (only supports one group of PWADs, will load in order)
     -warp <map>                Warp to the specified map (e.g., "01" for MAP01)
     -skill <level>             Set the skill level (1-5)
     -nomonsters                Disable monster spawning
@@ -70,7 +70,7 @@ impl CliArgs {
             cli_args.iwad_path = iwad_path;
         }
 
-        if let Some(pos) = args.iter().position(|arg| arg == "-pwad") {
+        if let Some(pos) = args.iter().position(|arg| arg == "-file") {
             args.remove(pos);
             while let Some(arg) = args.get(pos)
                 && !arg.starts_with('-')
@@ -84,7 +84,7 @@ impl CliArgs {
             }
 
             if cli_args.pwad_paths.is_empty() {
-                return Err("No PWAD files specified after -pwad".to_string());
+                return Err("No PWAD files specified after -file".to_string());
             }
         }
 
@@ -209,7 +209,7 @@ mod test {
         let mut args = vec![
             "-iwad".to_string(),
             "freedoom2.wad".to_string(),
-            "-pwad".to_string(),
+            "-file".to_string(),
             first_pwad_path.display().to_string(),
             second_pwad_path.display().to_string(),
             "-nomonsters".to_string(),
@@ -249,7 +249,7 @@ mod test {
             "-nomonsters".to_string(),
             "-iwad".to_string(),
             "freedoom2.wad".to_string(),
-            "-pwad".to_string(),
+            "-file".to_string(),
             first_pwad_path.display().to_string(),
             second_pwad_path.display().to_string(),
             "-warp".to_string(),
@@ -359,17 +359,17 @@ mod test {
 
     #[test]
     fn pwad_without_files_gives_error() {
-        let mut args = vec!["-pwad".to_string()];
+        let mut args = vec!["-file".to_string()];
         let cli_args = CliArgs::parse_args(&mut args);
         assert_eq!(
             cli_args,
-            Err("No PWAD files specified after -pwad".to_string())
+            Err("No PWAD files specified after -file".to_string())
         );
     }
 
     #[test]
     fn pwad_with_nonexistent_file_gives_error() {
-        let mut args = vec!["-pwad".to_string(), "nonexistent_file.wad".to_string()];
+        let mut args = vec!["-file".to_string(), "nonexistent_file.wad".to_string()];
         let cli_args = CliArgs::parse_args(&mut args);
         assert_eq!(
             cli_args,
@@ -379,11 +379,11 @@ mod test {
 
     #[test]
     fn pwad_followed_by_flag_gives_error() {
-        let mut args = vec!["-pwad".to_string(), "-nomonsters".to_string()];
+        let mut args = vec!["-file".to_string(), "-nomonsters".to_string()];
         let cli_args = CliArgs::parse_args(&mut args);
         assert_eq!(
             cli_args,
-            Err("No PWAD files specified after -pwad".to_string())
+            Err("No PWAD files specified after -file".to_string())
         );
     }
 
@@ -463,16 +463,16 @@ mod test {
         let first_pwad_path = cargo_dir.join("freedoom1.wad");
         let whatever_pwad_path = cargo_dir.join("freedoom2.wad");
         let mut args = vec![
-            "-pwad".to_string(),
+            "-file".to_string(),
             first_pwad_path.to_string_lossy().to_string(),
-            "-pwad".to_string(),
+            "-file".to_string(),
             whatever_pwad_path.to_string_lossy().to_string(),
         ];
         let cli_args = CliArgs::parse_args(&mut args);
         assert_eq!(
             cli_args,
             Err(format!(
-                "Unknown or extra arguments: [\"-pwad\", \"{}\"]",
+                "Unknown or extra arguments: [\"-file\", \"{}\"]",
                 whatever_pwad_path.to_string_lossy()
             ))
         );

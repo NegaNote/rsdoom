@@ -7,7 +7,7 @@
   1. Safety and idiomatic Rust — no unsafe game logic, no panics on malformed data, and strong types instead of raw C-style global state and bitfields wherever it improves correctness and maintainability. Internal representation may differ from vanilla, but **simulation behavior is deterministic and reproducible across builds of the same RSDoom version**, primarily on Linux and Windows and ideally on other platforms built from the same released source.
   2. Gameplay compatibility with the WAD ecosystem — the project should load and play original IWAD/PWAD assets correctly, with a staged compatibility plan from vanilla through Boom, MBF, MBF21, and id24 features. The engine should *feel* like DOOM: correct physics, responsive input, proper enemy behavior, and accurate rendering.
   3. Demo compatibility — support playback and recording of vanilla DOOM demos and demos created by compatible source ports when all behavior-affecting factors match. These include compatibility level and flags, patches, map metadata, skill, RNG algorithm, startup state, and demo format; DSDA-Doom is a primary behavioral reference where applicable.
-  4. Performance via modern architecture — a clear actor/message-passing pipeline, data-oriented structures where they help, and a renderer/audio split that does not block the simulation loop. Performance modes are available only where they preserve the determinism contract; determinism has priority over throughput.
+  4. Performance via modern architecture — a clear actor/message-passing pipeline, data-oriented structures where they help, and a renderer/audio split that does not block the simulation loop. Performance is an implementation detail, not a second orthogonal gameplay mode; determinism has priority over throughput, and compatibility rulesets remain the authority over behavior.
 
   ---
 
@@ -404,9 +404,11 @@
 
   ---
 
-  ## 8. Compatibility and performance modes
+  ## 8. Compatibility modes
 
-  The engine supports historical DOOM variant compatibility and, later, performance-oriented simulation. These concerns are represented separately but jointly determine behavior: a profile combines compatibility level, compatibility flags, RNG algorithm, metadata/patch inputs, and performance mode. Not every pairing is valid or demo-compatible.
+  The engine supports historical DOOM variant compatibility and RSDoom's own compatibility mode. These are not separate orthogonal settings; they are the rulesets that determine gameplay behavior. Performance remains an implementation concern, not a second gameplay mode. A profile combines compatibility level, compatibility flags, RNG algorithm, metadata/patch inputs, and the active compatibility mode. Not every pairing is valid or demo-compatible.
+
+  RSDoom's compatibility mode is a first-class engine ruleset. It may define its own features, gameplay decisions, and compatibility deviations when those choices are deliberate and documented. Unlike a performance toggle, it is allowed to change simulation behavior when that is the intended contract of the chosen RSDoom mode.
 
   ### 8.1 Simulation controller abstraction
 
@@ -417,11 +419,10 @@
   ```
   SimulationController (trait)
   ├─ VanillaFixedPoint
-  ├─ VanillaFloatPerf
   ├─ BoomFixedPoint
-  ├─ BoomFloatPerf
   ├─ MBF21FixedPoint
-  ├─ MBF21FloatPerf
+  ├─ RSDoomCompatFixedPoint
+  ├─ RSDoomCompatFloat
   └─ [Id24 variants]
   ```
 
@@ -431,17 +432,17 @@
   - physics integration method (fixed-point arithmetic vs floating-point)
   - specified object and event iteration order
   - RNG behavior and algorithm, including complevel-specific seeding and sequence
-  - compatibility quirks and edge cases
+  - compatibility quirks, engine-specific feature toggles, and gameplay decisions
 
   The sim actor instantiates one controller at session or level setup from the complete profile. The main loop uses that controller without repeatedly looking up compatibility configuration. A map transition may replace the gameplay state, but it cannot silently change the active profile.
 
   ### 8.2 Demo metadata and external source-port compatibility
 
-  Every demo identifies the profile and external inputs needed to reproduce it. A complevel/performance pair is only one part of that identity; flags, RNG algorithm, patches, UMAPINFO, skill, map, WAD fingerprints, and source-port/demo version are also relevant. Loading validates these inputs before instantiating the controller. This makes same-input replay deterministic without claiming that all demos sharing a complevel are interchangeable.
+  Every demo identifies the profile and external inputs needed to reproduce it. A compatibility mode pair is only one part of that identity; flags, RNG algorithm, patches, UMAPINFO, skill, map, WAD fingerprints, and source-port/demo version are also relevant. Loading validates these inputs before instantiating the controller. This makes same-input replay deterministic without claiming that all demos sharing a complevel are interchangeable.
 
   ### 8.3 Data-model extensions
 
-  Historical variants increase the metadata and behavior the engine can parse, but they do not change the actor topology. They fit into:
+  Historical variants and RSDoom's own mode increase the metadata and behavior the engine can parse, but they do not change the actor topology. They fit into:
 
   - raw WAD parsing and conversion layers
   - ruleset-aware special interpretation within the chosen controller
@@ -456,6 +457,7 @@
   - UMAPINFO metadata as the priority extended map-info format, followed by other supported MAPINFO variants
   - alternate node formats normalized into a single domain representation
   - extended blockmaps, map formats, thing flags, weapons, states, and specials
+  - RSDoom-specific compatibility features and gameplay decisions modeled as explicit profile behavior rather than ad hoc engine hacks
 
   The critical design rule is that behavior variation is resolved into the profile, game data, and controller. Renderer, audio, menu, and input do not implement gameplay rules, though the render snapshot may expose profile-dependent visual data.
 
@@ -463,12 +465,13 @@
 
   The strategy pattern creates clear testing boundaries:
 
-  - **Unit tests for each controller**: Each concrete controller has its own test suite validating its specific behavior. A test for `BoomFloatPerf` exercises only that variant's code path without branches or pollution from others.
+  - **Unit tests for each controller**: Each concrete controller has its own test suite validating its specific behavior. A test for `RSDoomCompatFixedPoint` exercises that mode's rules without branches or pollution from other compatibility sets.
   - **Determinism validation**: Run the same command stream against independent builds of the same released version on Linux and Windows and compare per-tic state hashes and final serialized state, requiring bit equality wherever practicable.
   - **Cross-variant regression**: Play the same simple test level (e.g., E1M1 with scripted player input) under each controller and record traces. These traces will differ legitimately, but should remain stable for their respective controllers.
   - **External demo compatibility**: Collect demos from vanilla and DSDA-Doom reference configurations. Validate the complete profile and compare gameplay traces, state hashes, and completion outcomes; tolerances apply only to explicitly presentation-only data.
   - **Malformed-input coverage**: Exercise invalid WADs, patches, metadata, demos, and resource-limit cases and require contextual errors without panics.
   - **Diagnostics coverage**: Ensure replay traces, state hashes, and actor failures identify the tic, profile, map, and relevant input.
+  - **RSDoom-specific mode coverage**: Validate that any custom RSDoom feature or gameplay decision is covered by explicit tests and that its behavior is stable under the same profile and command stream.
 
   ### 8.5 Cache efficiency
 
@@ -483,8 +486,8 @@
   3. verify vanilla deterministic behavior with scripted input and recorded traces
   4. add cross-build determinism checks and replay diagnostics before optimizing
   5. layer in Boom, MBF, and MBF21 fixed-point rulesets, using DSDA-Doom as the reference where applicable
-  6. prioritize DeHackEd/BEX, UMAPINFO, extended map formats, flags, states, weapons, and specials needed by those profiles
-  7. add performance variants only after their determinism is demonstrated across supported builds
+  6. define the RSDoom compatibility mode as an explicit engine-native ruleset and validate which extensions and gameplay decisions are intentionally supported
+  7. prioritize DeHackEd/BEX, UMAPINFO, extended map formats, flags, states, weapons, and specials needed by those profiles
   8. collect and test against external source-port demos for conditional cross-port compatibility
   9. treat id24 as an ongoing compatibility target rather than a prerequisite; retain ZDoom-family semantics and ACS as explicit non-goals
 
@@ -498,7 +501,7 @@
   - explicit state machine rather than global flags
   - immutable snapshot publication for the renderer
   - clearly bounded audio and input layers
-  - a ruleset and profile compatibility layer for historical DOOM variants
+  - a ruleset and profile compatibility layer for historical DOOM variants and an explicit RSDoom compatibility mode that may define its own gameplay decisions and engine features
   - deterministic replay, state hashing, and actionable diagnostics
   - an exactness-oriented software renderer with explicitly scoped hardware approximations
 

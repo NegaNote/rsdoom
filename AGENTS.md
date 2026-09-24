@@ -19,7 +19,7 @@ This repository is a safe, idiomatic Rust port of the 90's DOOM engine.
 Architecture decisions live in `docs/ARCHITECTURE.md` and should be treated as the source of truth.
 Freedoom assets are included, but the engine should be able to run with any WAD files.
 
-DSDA-Doom is to be used as a reference for the engine's behavior when it comes to compatibility, and a copy of its code MAY be included in the folder dsda-doom (note this is gitignored intentionally). Check for the folder's existence before making any assumptions.
+DSDA-Doom is to be used as a reference for the engine's behavior when it comes to compatibility, and a copy of its code MAY be included in the `dsda-doom` directory (note this is gitignored intentionally). Always check for the folder's existence before resorting to looking at external sources; the code in the folder should take precedent if present.
 Use it as a reference for how the engine should behave when it comes to expected outcomes and reproducing behavior, but don't copy any of its code.
 
 The clippy configuration is extremely pedantic, so look at the Cargo.toml before making any changes or suggestions to ensure that your code will pass clippy checks.
@@ -31,6 +31,14 @@ If unsafe code is used, it should be well-documented and justified in the code c
 Naturally, unsafe code must have extensive tests to ensure that it is sound, so when evaluating potential and existing test suites that use unsafe code, make sure to consider as many edge cases as possible.
 
 We want to enable the compiler to make optimizations like auto-vectorization wherever possible.
+
+Data parsing should be accomplished with winnow 1.0, which notably does NOT use PResult or IResult unlike earlier versions of the library.
+As a parser combinator library it allows for a lot of flexibility in parsing while maintaining correctness and a functional style.
+Parsers should be constructed piece-by-piece in chunks instead of trying to parse a large everything in a single function.
+
+Itertools is available for use, so don't go reinventing the wheel.
+Rayon may be appropriate in certain specific circumstances where iteration order isn't deterministic, but it should NEVER be used inside the simulation thread, as it needs tight control over the order of execution.
+It's fine for the rendering or audio threads, though.
 
 ## Verification commands
 
