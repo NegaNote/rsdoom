@@ -31,6 +31,7 @@ fn assert_lump_data(wad: &WadView, name: LumpName, expected: &[&[u8]]) {
 
 mod wad_type {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn accepts_iwad() {
@@ -51,10 +52,28 @@ mod wad_type {
         let mut input = b"INVALID".as_ref();
         assert!(is_valid_wad_type(&mut input).is_err());
     }
+
+    #[test]
+    fn consumes_only_the_type_prefix() {
+        let mut input = b"IWADtrailing".as_ref();
+        assert_eq!(is_valid_wad_type(&mut input), Ok(()));
+        assert_eq!(input, b"trailing");
+    }
+
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[case(3)]
+    fn rejects_each_truncated_type(#[case] length: usize) {
+        let mut input = b"IWAD".get(..length).unwrap();
+        assert!(is_valid_wad_type(&mut input).is_err());
+    }
 }
 
 mod header {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn reads_lump_count_and_directory_offset() {
@@ -107,16 +126,23 @@ mod header {
         assert!(get_header_info(&mut input).is_err());
     }
 
-    #[test]
-    fn rejects_every_truncated_header_length() {
-        for length in 0..12 {
-            let bytes = vec![0; length];
-            let mut input = bytes.as_slice();
-            assert!(
-                get_header_info(&mut input).is_err(),
-                "header length {length} unexpectedly parsed"
-            );
-        }
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[case(3)]
+    #[case(4)]
+    #[case(5)]
+    #[case(6)]
+    #[case(7)]
+    #[case(8)]
+    #[case(9)]
+    #[case(10)]
+    #[case(11)]
+    fn rejects_every_truncated_header_length(#[case] length: usize) {
+        let bytes = vec![0; length];
+        let mut input = bytes.as_slice();
+        assert!(get_header_info(&mut input).is_err());
     }
 
     #[test]
@@ -130,10 +156,33 @@ mod header {
             })
         );
     }
+
+    #[test]
+    fn leaves_trailing_header_bytes_unconsumed() {
+        let mut input = b"\x02\0\0\0\x10\0\0\0extra".as_ref();
+        assert!(get_num_lumps_and_info_table_offset(&mut input).is_ok());
+        assert_eq!(input, b"extra");
+    }
+
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[case(3)]
+    #[case(4)]
+    #[case(5)]
+    #[case(6)]
+    #[case(7)]
+    fn rejects_truncated_header_values(#[case] length: usize) {
+        let bytes = vec![0; length];
+        let mut input = bytes.as_slice();
+        assert!(get_num_lumps_and_info_table_offset(&mut input).is_err());
+    }
 }
 
 mod lump_info {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn reads_ascii_graphic_name() {
@@ -188,16 +237,27 @@ mod lump_info {
         );
     }
 
-    #[test]
-    fn rejects_every_truncated_lump_info_length() {
-        for length in 0..16 {
-            let bytes = vec![0; length];
-            let mut input = bytes.as_slice();
-            assert!(
-                get_lump_info(&mut input).is_err(),
-                "lump info length {length} unexpectedly parsed"
-            );
-        }
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[case(3)]
+    #[case(4)]
+    #[case(5)]
+    #[case(6)]
+    #[case(7)]
+    #[case(8)]
+    #[case(9)]
+    #[case(10)]
+    #[case(11)]
+    #[case(12)]
+    #[case(13)]
+    #[case(14)]
+    #[case(15)]
+    fn rejects_every_truncated_lump_info_length(#[case] length: usize) {
+        let bytes = vec![0; length];
+        let mut input = bytes.as_slice();
+        assert!(get_lump_info(&mut input).is_err());
     }
 
     #[test]
@@ -212,10 +272,18 @@ mod lump_info {
             })
         );
     }
+
+    #[test]
+    fn consumes_only_one_lump_info_record() {
+        let mut input = b"\0\0\0\0\0\0\0\0NAME\0\0\0\0tail".as_ref();
+        assert!(get_lump_info(&mut input).is_ok());
+        assert_eq!(input, b"tail");
+    }
 }
 
 mod lump_name {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn converts_padded_name_to_string() {
@@ -257,6 +325,195 @@ mod lump_name {
             Ok(LumpName(*b"BAD\x01\0\0\0\0"))
         );
         assert!(LumpName::try_from(*b"BAD\0GOOD").is_err());
+    }
+
+    #[test]
+    fn rejects_zero_leading_and_non_ascii_bytes() {
+        assert!(LumpName::try_from([0; 8]).is_err());
+        assert!(LumpName::try_from(*b"A\0\0\0\0\0\0\xff").is_err());
+        assert!(LumpName::try_from(*b"A\xff\0\0\0\0\0\0").is_err());
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(2)]
+    #[case(3)]
+    #[case(4)]
+    #[case(5)]
+    #[case(6)]
+    #[case(7)]
+    fn accepts_null_at_each_nonleading_position(#[case] position: usize) {
+        let mut bytes = [b'A'; 8];
+        bytes.get_mut(position..).unwrap().fill(0);
+        assert!(LumpName::try_from(bytes).is_ok());
+    }
+
+    #[rstest]
+    #[case("A")]
+    #[case("ABCDEFG")]
+    #[case("ABCDEFGH")]
+    fn from_str_accepts_boundary_lengths(#[case] value: &str) {
+        assert!(LumpName::from_str(value).is_ok());
+    }
+
+    #[rstest]
+    #[case("Ä")]
+    #[case("A\0B")]
+    fn from_str_rejects_non_ascii_and_embedded_nulls(#[case] value: &str) {
+        assert!(LumpName::from_str(value).is_err());
+    }
+
+    #[test]
+    fn displays_shortest_valid_name() {
+        let name = LumpName::from_str("A").unwrap();
+        assert_eq!(name.as_str(), "A");
+        assert_eq!(name.to_string(), "A");
+    }
+}
+
+mod map_helpers {
+    use super::*;
+    use rstest::rstest;
+
+    fn name(value: &str) -> LumpName {
+        LumpName::from_str(value).unwrap()
+    }
+
+    mod namespaces_and_boundaries {
+        use super::*;
+        use crate::wad::builder::WadBuilder;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        fn load_builder(wad_type: WadType, names: &[&str]) -> WadView {
+            let mut builder = WadBuilder::new(wad_type);
+            for name in names {
+                builder.add_empty_lump(name).unwrap();
+            }
+            let path = std::env::temp_dir().join(format!(
+                "rsdoom-raw-test-{}-{}.wad",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            builder.write_to_file(&path).unwrap();
+            let loaded = load_wad(&path, wad_type).unwrap();
+            std::fs::remove_file(path).unwrap();
+            loaded
+        }
+
+        #[test]
+        fn assigns_each_namespace_only_between_markers() {
+            let wad = load_builder(
+                WadType::Pwad,
+                &[
+                    "S_START", "SPRITE", "S_END", "F_START", "FLAT", "F_END", "C_START", "COLOR",
+                    "C_END", "B_START", "BLOCK", "B_END", "HI_START", "HIRES", "HI_END", "AFTER",
+                ],
+            );
+            assert!(
+                wad.get_lump_by_str_name_and_namespace("SPRITE", Namespace::Sprites)
+                    .is_some()
+            );
+            assert!(
+                wad.get_lump_by_str_name_and_namespace("FLAT", Namespace::Flats)
+                    .is_some()
+            );
+            assert!(
+                wad.get_lump_by_str_name_and_namespace("COLOR", Namespace::Colormaps)
+                    .is_some()
+            );
+            assert!(
+                wad.get_lump_by_str_name_and_namespace("BLOCK", Namespace::PrBoom)
+                    .is_some()
+            );
+            assert!(
+                wad.get_lump_by_str_name_and_namespace("HIRES", Namespace::HiRes)
+                    .is_some()
+            );
+            assert!(
+                wad.get_lump_by_str_name_and_namespace("AFTER", Namespace::Global)
+                    .is_some()
+            );
+            assert!(
+                wad.get_lump_by_str_name_and_namespace("S_START", Namespace::Global)
+                    .is_some()
+            );
+        }
+
+        #[test]
+        fn preserves_requested_source_type() {
+            let wad = load_builder(WadType::Pwad, &["DATA"]);
+            assert_eq!(
+                wad.lumps.first().map(|lump| lump.source_type),
+                Some(WadType::Pwad)
+            );
+        }
+
+        #[test]
+        fn get_lump_lookup_handles_duplicates_and_invalid_inputs() {
+            let wad = load_builder(WadType::Iwad, &["DUP", "DUP", "OTHER"]);
+            assert_eq!(
+                wad.get_lumps_by_name(LumpName::from_str("DUP").unwrap())
+                    .len(),
+                2
+            );
+            assert_eq!(wad.get_lump_index_by_str_name("DUP"), Some(0));
+            assert!(wad.get_lump_by_str_name("TOO-LONG!").is_none());
+            assert!(wad.get_lump_at(usize::MAX).is_none());
+        }
+
+        #[test]
+        fn empty_wad_can_have_directory_at_eof() {
+            let wad = load_builder(WadType::Iwad, &[]);
+            assert!(wad.lumps.is_empty());
+        }
+    }
+
+    #[rstest]
+    #[case("E1M1")]
+    #[case("MAP01")]
+    #[case("MAP123")]
+    fn classifies_supported_map_markers(#[case] marker: &str) {
+        assert!(parse_map_marker(marker).is_ok());
+        assert!(is_map_marker(name(marker)));
+    }
+
+    #[rstest]
+    #[case("E1")]
+    #[case("E1M")]
+    #[case("MAP")]
+    #[case("MAP01X")]
+    #[case("MAP-1")]
+    #[case("e1m1")]
+    #[case("E1M1X")]
+    fn rejects_malformed_map_markers(#[case] marker: &str) {
+        assert!(parse_map_marker(marker).is_err());
+    }
+
+    #[rstest]
+    #[case("THINGS")]
+    #[case("LINEDEFS")]
+    #[case("SIDEDEFS")]
+    #[case("VERTEXES")]
+    #[case("SEGS")]
+    #[case("SSECTORS")]
+    #[case("NODES")]
+    #[case("SECTORS")]
+    #[case("REJECT")]
+    #[case("BLOCKMAP")]
+    #[case("BEHAVIOR")]
+    #[case("TEXTMAP")]
+    fn recognizes_map_lumps(#[case] lump: &str) {
+        assert!(is_map_lump(name(lump)));
+    }
+
+    #[rstest]
+    #[case("THINGSX")]
+    #[case("MAP01")]
+    fn rejects_non_map_lumps(#[case] lump: &str) {
+        assert!(!is_map_lump(name(lump)));
     }
 }
 

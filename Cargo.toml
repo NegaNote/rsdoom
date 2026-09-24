@@ -10,7 +10,9 @@ bytemuck = "1.25"
 grid = "1.0"
 itertools = "0.15"
 log = { version = "0.4", features = ["release_max_level_warn", "max_level_debug", "kv", "kv_serde", "std"] }
+proptest = "1.11.0"
 rayon = "1.12"
+rstest = "0.27.0"
 sdl3 = { version = "0.20", features = ["static-link", "build-from-source", "raw-window-handle"] }
 simple_logger = { version = "5.2", features = ["threads"] }
 thiserror = "2.0"
