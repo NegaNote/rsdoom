@@ -96,6 +96,12 @@ impl WadView {
             .skip(1) // Skip the start marker itself
             .take_while(move |lump| start_marker != end_marker && lump.name != end_marker)
     }
+
+    pub fn get_lumps_by_namespace(&self, namespace: Namespace) -> impl Iterator<Item = &Lump> {
+        self.lumps
+            .iter()
+            .filter(move |lump| lump.namespace == namespace)
+    }
 }
 
 /// Lump names are 8-byte ASCII strings padded by null bytes.
@@ -116,16 +122,21 @@ impl Lump {
     pub fn get_raw_data(&self) -> &[u8] {
         &self.raw_data
     }
+
+    #[must_use]
+    pub const fn get_namespace(&self) -> Namespace {
+        self.namespace
+    }
+
+    #[must_use]
+    pub const fn get_name(&self) -> LumpName {
+        self.name
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Error)]
+#[error("Invalid lump name")]
 pub struct LumpNameError;
-
-impl Display for LumpNameError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Invalid lump name")
-    }
-}
 
 impl TryFrom<[u8; 8]> for LumpName {
     type Error = LumpNameError;
@@ -145,6 +156,19 @@ impl TryFrom<[u8; 8]> for LumpName {
         }
 
         Ok(Self(value))
+    }
+}
+
+impl TryFrom<&[u8]> for LumpName {
+    type Error = LumpNameError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        if value.len() != 8 {
+            return Err(LumpNameError);
+        }
+        let mut array = [0u8; 8];
+        array.copy_from_slice(value);
+        Self::try_from(array)
     }
 }
 

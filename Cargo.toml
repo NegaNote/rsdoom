@@ -8,8 +8,9 @@ default-run = "rsdoom"
 [dependencies]
 bytemuck = "1.25"
 grid = "1.0"
+hashbrown = "0.17.1"
 itertools = "0.15"
-log = { version = "0.4", features = ["release_max_level_warn", "max_level_debug", "kv", "kv_serde", "std"] }
+log = { version = "0.4", features = ["release_max_level_info", "max_level_debug", "kv", "kv_serde", "std"] }
 proptest = "1.11.0"
 rayon = "1.12"
 rstest = "0.27.0"
