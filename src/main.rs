@@ -147,7 +147,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    let patch_names = match parse_pnames(pnames.get_raw_data()) {
+    let _patch_names = match parse_pnames(pnames.get_raw_data()) {
         Ok(pnames) => {
             debug!("Parsed PNAMES lump with {} entries", pnames.len());
             pnames

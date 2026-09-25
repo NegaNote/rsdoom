@@ -1,5 +1,6 @@
 use crate::wad::raw::{LumpName, LumpNameError};
 use grid::{Grid, Order};
+use itertools::Itertools;
 use thiserror::Error;
 use truncate_integer::TruncateUnchecked;
 use usize_conv::ToUsize;
@@ -70,15 +71,30 @@ impl Palette {
                 length: bytes.len(),
             });
         }
-        let mut palette = Self {
-            colors: [PaletteColor::new(0, 0, 0); 256],
+
+        let palette = Self {
+            colors: bytes
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .enumerate()
+                .map(|(i, chunk)| {
+                    (
+                        PaletteIndex(i.truncate_unchecked()),
+                        PaletteColor::from_bytes(*chunk),
+                    )
+                })
+                .fold(
+                    [PaletteColor::new(0, 0, 0); 256],
+                    |mut colors, (index, color)| {
+                        if let Some(slot) = colors.get_mut(index.0.to_usize()) {
+                            *slot = color;
+                        }
+                        colors
+                    },
+                ),
         };
-        for (i, chunk) in bytes.as_chunks::<3>().0.iter().enumerate() {
-            palette.set_color(
-                PaletteIndex(i.truncate_unchecked()),
-                PaletteColor::from_bytes(*chunk),
-            );
-        }
+
         Ok(palette)
     }
 
@@ -109,10 +125,14 @@ impl DoomPalettes {
                 length: bytes.len(),
             });
         }
-        let mut palettes_vec = Vec::with_capacity(14);
-        for chunk in bytes.as_chunks::<768>().0 {
-            palettes_vec.push(Palette::from_bytes(chunk)?);
-        }
+
+        let palettes_vec: Vec<Palette> = bytes
+            .as_chunks::<768>()
+            .0
+            .iter()
+            .map(|chunk| Palette::from_bytes(chunk))
+            .try_collect()?;
+
         Ok(Self {
             palettes: palettes_vec.try_into().map_err(|_| PaletteError {
                 length: bytes.len(),
@@ -143,11 +163,9 @@ impl PatchHeader {
         let left_offset = le_i16.parse_next(bytes)?;
         let top_offset = le_i16.parse_next(bytes)?;
 
-        let mut column_offsets = Vec::with_capacity(width.to_usize());
-        for _ in 0..width {
-            let offset = le_u32.parse_next(bytes)?;
-            column_offsets.push(offset);
-        }
+        let column_offsets = (0..width.to_usize())
+            .map(|_| le_u32.parse_next(bytes))
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
             left_offset,
@@ -172,11 +190,9 @@ impl Post {
         // Ignore padding bytes
         take(2usize).parse_next(bytes)?;
 
-        let mut pixels = Vec::with_capacity(pixel_count.to_usize());
-        for _ in 0..pixel_count {
-            let pixel = le_u8.parse_next(bytes)?;
-            pixels.push(PaletteIndex(pixel));
-        }
+        let pixels = (0..pixel_count.to_usize())
+            .map(|_| -> Result<PaletteIndex> { Ok(PaletteIndex(le_u8.parse_next(bytes)?)) })
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
             top_delta,
@@ -347,6 +363,7 @@ impl RawGfxAsset {
     }
 }
 
+#[allow(dead_code)]
 pub struct GfxAsset {
     pixel_data: Grid<Option<PaletteIndex>>,
 }
@@ -402,15 +419,12 @@ fn map_pnames_parse_error(error: ParseError<&[u8], ContextError>) -> PnamesError
 
 fn pnames_parser(bytes: &mut &[u8]) -> Result<Vec<LumpName>> {
     let num_textures = le_u32.parse_next(bytes)?;
-    let mut texture_names = Vec::with_capacity(num_textures.to_usize());
-    for _ in 0..num_textures {
-        let name_bytes = take(8usize).parse_next(bytes)?;
-        let Ok(name) = LumpName::try_from(name_bytes) else {
-            return Err(ContextError::from_external_error(bytes, LumpNameError));
-        };
-        texture_names.push(name);
-    }
-    Ok(texture_names)
+    (0..num_textures.to_usize())
+        .map(|_| -> Result<LumpName> {
+            let name_bytes = take(8usize).parse_next(bytes)?;
+            LumpName::try_from(name_bytes).map_err(|e| ContextError::from_external_error(bytes, e))
+        })
+        .collect::<Result<Vec<_>>>()
 }
 
 /// # Errors
@@ -443,6 +457,7 @@ impl From<VanillaPatchIndex> for PatchIndex {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
 pub struct VanillaTexturePatch {
     origin_x: i16,
@@ -467,6 +482,7 @@ impl VanillaTexturePatch {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct VanillaTextureDefinition {
     name: LumpName,
@@ -518,11 +534,10 @@ impl VanillaTextureDefinition {
         take(4usize).parse_next(bytes)?;
 
         let num_patches = le_u16.parse_next(bytes)?;
-        let mut patches = Vec::with_capacity(num_patches.to_usize());
-        for _ in 0..num_patches {
-            let patch = VanillaTexturePatch::bytes_parser.parse_next(bytes)?;
-            patches.push(patch);
-        }
+        let patches = (0..num_patches.to_usize())
+            .map(|_| VanillaTexturePatch::bytes_parser.parse_next(bytes))
+            .collect::<Result<Vec<_>>>()?;
+
         Ok(Self {
             name,
             width,
@@ -541,26 +556,23 @@ pub fn parse_vanilla_texture_definitions(
         let offset = e.offset();
         VanillaTextureDefinitionError::Malformed { offset }
     })?;
-    let mut textures: Vec<VanillaTextureDefinition> = Vec::with_capacity(texture_offsets.len());
 
-    for offset in texture_offsets {
-        let offset = offset.to_usize();
-        match bytes.get(offset..) {
-            Some(texture_bytes) => {
-                let (named_texture, _) = (VanillaTextureDefinition::bytes_parser, rest)
-                    .parse(texture_bytes)
-                    .map_err(map_vanilla_texture_definition_parse_error)?;
-                textures.push(named_texture);
-            }
-            None => {
-                return Err(VanillaTextureDefinitionError::InvalidLength {
-                    length: bytes.len(),
-                });
-            }
-        }
-    }
-
-    Ok(textures)
+    texture_offsets
+        .into_iter()
+        .map(|offset| {
+            let offset = offset.to_usize();
+            let texture_bytes =
+                bytes
+                    .get(offset..)
+                    .ok_or(VanillaTextureDefinitionError::InvalidLength {
+                        length: bytes.len(),
+                    })?;
+            (VanillaTextureDefinition::bytes_parser, rest)
+                .parse(texture_bytes)
+                .map(|(named_texture, _)| named_texture)
+                .map_err(map_vanilla_texture_definition_parse_error)
+        })
+        .collect::<Result<Vec<_>, _>>()
 }
 
 fn texture_offsets_parser(bytes: &mut &[u8]) -> Result<Vec<u32>> {

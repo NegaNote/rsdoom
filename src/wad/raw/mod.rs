@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::PathBuf;
 use std::str::FromStr;
 use thiserror::Error;
@@ -246,42 +246,18 @@ pub enum WadLoadingError {
 /// # Errors
 /// Will error out on missing file or on errors parsing the WAD file.
 pub fn load_wad(path: &PathBuf, wad_type: WadType) -> Result<WadView, WadLoadingError> {
-    let mut wad_file: File = File::open(path).map_err(WadLoadingError::CouldntReadFile)?;
-    wad_file.seek(SeekFrom::Start(0))?;
-    let mut header_bytes = [0u8; 12];
-    wad_file.read_exact(&mut header_bytes)?;
+    let mut wad_file = File::open(path).map_err(WadLoadingError::CouldntReadFile)?;
+    let mut bytes = Vec::new();
+    wad_file.read_to_end(&mut bytes)?;
 
-    let header_info = get_header_info
-        .parse(&header_bytes)
-        .map_err(|_| WadLoadingError::InvalidHeader)?;
+    drop(wad_file); // Explicitly drop the file handle to ensure it's closed before proceeding.
 
-    wad_file.seek(SeekFrom::Start(u64::from(header_info.info_table_offset)))?;
-
-    let mut lump_infos: Vec<LumpInfo> = Vec::with_capacity(header_info.num_lumps.to_usize());
-
-    for _ in 0..header_info.num_lumps {
-        let mut lump_info_bytes = [0u8; 16];
-        wad_file.read_exact(&mut lump_info_bytes)?;
-        let lump_info = get_lump_info
-            .parse(&lump_info_bytes)
-            .map_err(|_| WadLoadingError::InvalidLumpName(LumpNameError))?;
-
-        lump_infos.push(lump_info);
-    }
-
-    let mut lumps: Vec<Lump> = Vec::with_capacity(lump_infos.len());
-
-    for lump_info in lump_infos {
-        wad_file.seek(SeekFrom::Start(u64::from(lump_info.offset)))?;
-        let mut raw_data = vec![0u8; lump_info.size.to_usize()];
-        wad_file.read_exact(&mut raw_data)?;
-        lumps.push(Lump {
-            name: lump_info.name,
-            raw_data,
-            source_type: wad_type,
-            namespace: Namespace::Global, // Default namespace, updated later based on markers
-        });
-    }
+    let header_info = parse_wad_header(&bytes)?;
+    let lump_infos = parse_wad_directory(&bytes, header_info)?;
+    let lumps = lump_infos
+        .into_iter()
+        .map(|lump_info| read_lump(&bytes, wad_type, lump_info))
+        .collect::<Result<Vec<_>, WadLoadingError>>()?;
 
     let mut wad_view = WadView { lumps };
 
@@ -331,6 +307,99 @@ pub fn load_wad(path: &PathBuf, wad_type: WadType) -> Result<WadView, WadLoading
     Ok(wad_view)
 }
 
+fn parse_wad_header(bytes: &[u8]) -> Result<HeaderInfo, WadLoadingError> {
+    if bytes.len() < 12 {
+        return Err(WadLoadingError::CouldntReadFile(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "truncated header",
+        )));
+    }
+
+    let mut input = bytes;
+    get_header_info
+        .parse_next(&mut input)
+        .map_err(|_| WadLoadingError::InvalidHeader)
+}
+
+fn parse_wad_directory(
+    bytes: &[u8],
+    header_info: HeaderInfo,
+) -> Result<Vec<LumpInfo>, WadLoadingError> {
+    if header_info.num_lumps == 0 {
+        return Ok(Vec::new());
+    }
+
+    let directory_start = header_info.info_table_offset.to_usize();
+    let directory = bytes.get(directory_start..).ok_or_else(|| {
+        WadLoadingError::CouldntReadFile(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "directory beyond eof",
+        ))
+    })?;
+
+    let num_lumps = header_info.num_lumps.to_usize();
+    let mut remaining = directory;
+    let lump_infos = (0..num_lumps)
+        .map(|_| {
+            let Some(entry) = remaining.get(..16) else {
+                return Err(WadLoadingError::CouldntReadFile(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "truncated directory",
+                )));
+            };
+
+            let mut entry_bytes = entry;
+            let lump_info = get_lump_info
+                .parse_next(&mut entry_bytes)
+                .map_err(|_| WadLoadingError::InvalidLumpName(LumpNameError))?;
+
+            remaining = remaining.get(16..).unwrap_or_default();
+            Ok(lump_info)
+        })
+        .collect::<Result<Vec<_>, WadLoadingError>>()?;
+
+    Ok(lump_infos)
+}
+
+fn read_lump(
+    bytes: &[u8],
+    wad_type: WadType,
+    lump_info: LumpInfo,
+) -> Result<Lump, WadLoadingError> {
+    if lump_info.size == 0 {
+        return Ok(Lump {
+            name: lump_info.name,
+            raw_data: Vec::new(),
+            source_type: wad_type,
+            namespace: Namespace::Global,
+        });
+    }
+
+    let start = lump_info.offset.to_usize();
+    let end = start
+        .checked_add(lump_info.size.to_usize())
+        .ok_or_else(|| {
+            WadLoadingError::CouldntReadFile(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "lump size overflow",
+            ))
+        })?;
+
+    let raw_data = bytes.get(start..end).ok_or_else(|| {
+        WadLoadingError::CouldntReadFile(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "truncated lump data",
+        ))
+    })?;
+
+    Ok(Lump {
+        name: lump_info.name,
+        raw_data: raw_data.to_vec(),
+        source_type: wad_type,
+        namespace: Namespace::Global,
+    })
+}
+
 fn apply_namespaces_between_markers(
     wad: &mut WadView,
     start_marker: LumpName,
@@ -343,56 +412,46 @@ fn apply_namespaces_between_markers(
 }
 
 pub fn patch_wad(wad: &mut WadView, patch_wad: &WadView) {
-    // Phase 1: Handle non-map lumps by name+namespace
-    for patch_lump in &patch_wad.lumps {
-        // Skip map-related lumps; handle them in phase 2
-        if is_map_lump(patch_lump.name) || is_map_marker(patch_lump.name) {
-            continue;
-        }
+    patch_wad
+        .lumps
+        .iter()
+        .filter(|patch_lump| !(is_map_lump(patch_lump.name) || is_map_marker(patch_lump.name)))
+        .for_each(|patch_lump| {
+            if let Some(existing) = wad
+                .lumps
+                .iter_mut()
+                .find(|l| l.name == patch_lump.name && l.namespace == patch_lump.namespace)
+            {
+                existing.raw_data.clone_from(&patch_lump.raw_data);
+                existing.source_type = patch_lump.source_type;
+            } else {
+                wad.lumps.push(patch_lump.clone());
+            }
+        });
 
-        if let Some(existing) = wad
-            .lumps
-            .iter_mut()
-            .find(|l| l.name == patch_lump.name && l.namespace == patch_lump.namespace)
-        {
-            existing.raw_data.clone_from(&patch_lump.raw_data);
-            existing.source_type = patch_lump.source_type;
-        } else {
-            wad.lumps.push(patch_lump.clone());
-        }
-    }
-
-    // Phase 2: Handle map lumps (position-aware)
-    // For each map marker in patch_wad, find the corresponding map in wad
-    // and replace its sequential lumps (the 11 lumps following the map marker)
-    for (patch_map_idx, patch_lump) in patch_wad.lumps.iter().enumerate() {
-        if !is_map_marker(patch_lump.name) {
-            continue;
-        }
-
-        // Find the same map in wad
-        if let Some(wad_map_idx) = wad.lumps.iter().position(|l| l.name == patch_lump.name) {
-            // Replace the next 11 lumps (THINGS through BEHAVIOR)
-            for offset in 1..=11 {
-                if let Some(patch_lump_to_add) = patch_wad.lumps.get(patch_map_idx + offset) {
-                    if let Some(existing) = wad.lumps.get_mut(wad_map_idx + offset) {
-                        // Replace existing lump
-                        *existing = patch_lump_to_add.clone();
-                    } else {
-                        // Append if wad doesn't have that slot
+    patch_wad
+        .lumps
+        .iter()
+        .enumerate()
+        .filter(|(_, patch_lump)| is_map_marker(patch_lump.name))
+        .for_each(|(patch_map_idx, patch_lump)| {
+            if let Some(wad_map_idx) = wad.lumps.iter().position(|l| l.name == patch_lump.name) {
+                (1..=11).for_each(|offset| {
+                    if let Some(patch_lump_to_add) = patch_wad.lumps.get(patch_map_idx + offset) {
+                        match wad.lumps.get_mut(wad_map_idx + offset) {
+                            Some(existing) => *existing = patch_lump_to_add.clone(),
+                            None => wad.lumps.push(patch_lump_to_add.clone()),
+                        }
+                    }
+                });
+            } else {
+                (0..=11).for_each(|offset| {
+                    if let Some(patch_lump_to_add) = patch_wad.lumps.get(patch_map_idx + offset) {
                         wad.lumps.push(patch_lump_to_add.clone());
                     }
-                }
+                });
             }
-        } else {
-            // Map doesn't exist in wad; add the entire map with its 11 lumps
-            for offset in 0..=11 {
-                if let Some(patch_lump_to_add) = patch_wad.lumps.get(patch_map_idx + offset) {
-                    wad.lumps.push(patch_lump_to_add.clone());
-                }
-            }
-        }
-    }
+        });
 }
 
 #[must_use]

@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::Path;
 use std::str::FromStr;
 
+use itertools::Itertools;
+
 pub use crate::wad::raw::LumpNameError;
 use crate::wad::raw::{LumpName, WadType};
 
@@ -131,38 +133,35 @@ impl WadBuilder {
     }
 
     fn build_lumps_and_infos(&self) -> std::io::Result<(Vec<u8>, Vec<Vec<u8>>)> {
-        let mut lump_data = Vec::new();
-        let mut lump_infos = Vec::new();
-        let mut current_offset = 12; // Start after header
+        let (lump_data, lump_infos, _) = self.lumps.iter().try_fold(
+            (Vec::new(), Vec::new(), 12usize),
+            |(mut lump_data, mut lump_infos, current_offset), entry| {
+                let offset = u32::try_from(current_offset).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Lump offset exceeds u32 bounds",
+                    )
+                })?;
+                let size = u32::try_from(entry.data.len()).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Lump size exceeds u32 bounds",
+                    )
+                })?;
 
-        for entry in &self.lumps {
-            // Record where this lump's data starts
-            let offset = u32::try_from(current_offset).map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Lump offset exceeds u32 bounds",
-                )
-            })?;
-            let size = u32::try_from(entry.data.len()).map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Lump size exceeds u32 bounds",
-                )
-            })?;
+                lump_data.extend_from_slice(&entry.data);
 
-            // Add the lump data
-            lump_data.extend_from_slice(&entry.data);
-            current_offset += entry.data.len();
+                let mut info = Vec::with_capacity(16);
+                info.extend_from_slice(&offset.to_le_bytes());
+                info.extend_from_slice(&size.to_le_bytes());
+                info.extend_from_slice(entry.name.as_bytes());
+                lump_infos.push(info);
 
-            // Build the lump info entry (16 bytes)
-            let mut info = Vec::with_capacity(16);
-            info.extend_from_slice(&offset.to_le_bytes()); // 4 bytes
-            info.extend_from_slice(&size.to_le_bytes()); // 4 bytes
-            info.extend_from_slice(entry.name.as_bytes()); // 8 bytes
-            lump_infos.push(info);
-        }
+                Ok::<_, std::io::Error>((lump_data, lump_infos, current_offset + entry.data.len()))
+            },
+        )?;
 
-        Ok((lump_data, lump_infos))
+        Ok((lump_data, lump_infos.into_iter().collect_vec()))
     }
 
     fn get_total_lump_data_size(&self) -> usize {
