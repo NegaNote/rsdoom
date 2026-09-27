@@ -163,7 +163,7 @@ fn converts_transparency_and_clips_to_height() {
     let grid = Patch::new(&bytes).unwrap().as_pixel_data();
     assert_eq!(grid.size(), (2, 1));
     assert_eq!(grid.get(0, 0), Some(&Some(PaletteIndex(10))));
-    assert_eq!(grid.get(1, 0), Some(&None));
+    assert_eq!(grid.get(1, 0), Some(&Some(PaletteIndex(20))));
 }
 
 proptest! {

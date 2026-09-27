@@ -173,6 +173,9 @@ impl TryFrom<&[u8]> for LumpName {
 }
 
 impl LumpName {
+    pub const TITLEPIC: Self = Self(*b"TITLEPIC");
+    pub const PLAYPAL: Self = Self(*b"PLAYPAL\0");
+
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; 8] {
         &self.0

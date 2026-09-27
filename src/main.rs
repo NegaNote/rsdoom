@@ -4,15 +4,21 @@ use std::process::ExitCode;
 
 use hashbrown::HashMap;
 use rsdoom::argparse;
-use rsdoom::wad::assets::gfx::{GfxAsset, parse_pnames, parse_vanilla_texture_definitions};
+use rsdoom::wad::assets::gfx::{
+    DoomPalettes, GfxAsset, parse_pnames, parse_vanilla_texture_definitions,
+};
 use rsdoom::wad::raw::{LumpName, Namespace, WadType, load_wad, patch_wad};
-use sdl3::{event::Event, keyboard::Keycode, pixels::Color};
+use sdl3::event::WindowEvent;
+use sdl3::pixels::PixelFormat;
+use sdl3::{event::Event, keyboard::Keycode};
 use simple_logger::SimpleLogger;
 use std::{
     thread,
     time::{Duration, Instant},
 };
+use truncate_integer::TruncateUnchecked;
 
+// Since we're running at a constant 35 FPS this is our frame time.
 const FRAME_TIME: Duration = Duration::new(0, 1_000_000_000u32 / 35);
 
 #[expect(
@@ -29,7 +35,6 @@ fn main() -> ExitCode {
     let Ok(()) = SimpleLogger::new()
         .with_level(logging_level)
         .env()
-        .with_threads(true)
         .with_local_timestamps()
         .init()
     else {
@@ -212,8 +217,31 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
+    let Some(titlepic) = gfx_asset_map.get(&LumpName::TITLEPIC) else {
+        error!("Could not find TITLEPIC lump");
+        return ExitCode::FAILURE;
+    };
+
+    let Some(playpal_lump) = wad.get_lump_by_str_name_and_namespace("PLAYPAL", Namespace::Global)
+    else {
+        error!("Could not find PLAYPAL lump");
+        return ExitCode::FAILURE;
+    };
+
+    let palettes: DoomPalettes = match DoomPalettes::from_bytes(playpal_lump.get_raw_data()) {
+        Ok(palettes) => palettes,
+        Err(err) => {
+            error!("Failed to parse PLAYPAL lump: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut window_width = titlepic.width().truncate_unchecked();
+    let mut window_height = titlepic.height().truncate_unchecked();
+
     let Ok(window) = video_subsystem
-        .window("RSDoom", 640, 480)
+        .window("RSDoom", window_width, window_height)
+        // .resizable()
         .position_centered()
         .build()
     else {
@@ -223,13 +251,30 @@ fn main() -> ExitCode {
 
     let mut canvas = window.into_canvas();
 
-    canvas.set_draw_color(Color::RGB(0, 255, 255));
-    canvas.clear();
-    canvas.present();
-
     debug!("Created sdl3 window");
 
-    // This is just placeholder code, will implement actual game logic later
+    let texture_creator = canvas.texture_creator();
+    let Ok(mut texture) =
+        texture_creator.create_texture_streaming(PixelFormat::RGBA32, window_width, window_height)
+    else {
+        error!("Could not create texture");
+        return ExitCode::FAILURE;
+    };
+
+    let Some(normal_palette) = palettes.get_palette(0) else {
+        error!("Could not get normal palette");
+        return ExitCode::FAILURE;
+    };
+
+    let titlepic_rgba = titlepic.as_rgba_grid(normal_palette);
+    texture
+        .update(None, titlepic_rgba.iter().as_slice(), titlepic_rgba.cols())
+        .unwrap_or_else(|err| {
+            error!("Could not update texture: {err}");
+            std::process::exit(1);
+        });
+
+    canvas.present();
 
     let Ok(mut event_pump) = sdl_context.event_pump() else {
         error!("Could not create event pump");
@@ -239,8 +284,6 @@ fn main() -> ExitCode {
     'running: loop {
         let frame_start = Instant::now();
         i = i.wrapping_add(1);
-        canvas.set_draw_color(Color::RGB(i, 64, 255_u8.wrapping_sub(i)));
-        canvas.clear();
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -248,7 +291,37 @@ fn main() -> ExitCode {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
+                Event::Window {
+                    win_event: WindowEvent::Resized(w, h),
+                    ..
+                } => {
+                    window_width = w.cast_unsigned();
+                    window_height = h.cast_unsigned();
+                    match texture_creator.create_texture_streaming(
+                        PixelFormat::RGBA32,
+                        window_width,
+                        window_height,
+                    ) {
+                        Ok(new_texture) => {
+                            texture = new_texture;
+                        }
+                        Err(err) => {
+                            error!("Could not resize texture: {err}");
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                }
                 _ => {}
+            }
+        }
+
+        canvas.clear();
+
+        match canvas.copy(&texture, None, None) {
+            Ok(()) => {}
+            Err(err) => {
+                error!("Could not copy texture to canvas: {err}");
+                return ExitCode::FAILURE;
             }
         }
 
@@ -256,6 +329,7 @@ fn main() -> ExitCode {
 
         let elapsed = frame_start.elapsed();
 
+        // Checked sub here means that if the frame took longer than the target frame time, we won't sleep at all.
         FRAME_TIME
             .checked_sub(elapsed)
             .inspect(|dur| thread::sleep(*dur));

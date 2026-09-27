@@ -254,28 +254,29 @@ impl Patch {
         })
     }
 
+    /// Transforms the patch into a grid of pixel data as indexes into a palette.
+    /// Transparent pixels are represented as `None`.
     #[must_use]
     pub fn as_pixel_data(&self) -> Grid<Option<PaletteIndex>> {
         let width = self.columns.len();
         let height = self.height.to_usize();
         let mut grid: Grid<Option<PaletteIndex>> =
-            Grid::init_with_order(height, width, Order::ColumnMajor, None);
+            Grid::init_with_order(height, width, Order::RowMajor, None);
 
         self.columns.iter().enumerate().for_each(|(x, column)| {
-            let mut prev_y_start: Option<usize> = None;
             column.posts.iter().for_each(|post| {
-                let top_delta = post.top_delta.to_usize();
-                let y_start = match prev_y_start {
-                    Some(previous) if top_delta <= previous => previous + top_delta,
-                    _ => top_delta,
-                };
-                prev_y_start = Some(y_start);
-                post.pixels.iter().enumerate().for_each(|(i, pixel)| {
-                    let y = y_start + i;
-                    grid.get_mut(x, y)
-                        .into_iter()
-                        .for_each(|color| *color = Some(*pixel));
-                });
+                post.pixels
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .for_each(|(offset, pixel)| {
+                        let row = post.top_delta.to_usize() + offset;
+                        if row < height
+                            && let Some(cell) = grid.get_mut(row, x)
+                        {
+                            *cell = Some(pixel);
+                        }
+                    });
             });
         });
 
@@ -310,6 +311,8 @@ impl RawScreen {
         Ok(Self { pixels })
     }
 
+    /// Transforms the patch into a grid of pixel data as indexes into a palette.
+    /// Transparent pixels are represented as `None`.
     #[must_use]
     pub fn as_pixel_data(&self) -> Grid<Option<PaletteIndex>> {
         Grid::from_vec_with_order(
@@ -375,6 +378,41 @@ impl GfxAsset {
         Ok(Self {
             pixel_data: RawGfxAsset::new(bytes)?.as_pixel_data(),
         })
+    }
+
+    #[must_use]
+    pub const fn width(&self) -> usize {
+        self.pixel_data.cols()
+    }
+
+    #[must_use]
+    pub const fn height(&self) -> usize {
+        self.pixel_data.rows()
+    }
+
+    #[must_use]
+    #[allow(clippy::many_single_char_names)]
+    pub fn as_rgba_grid(&self, palette: &Palette) -> Grid<u8> {
+        let width = self.pixel_data.cols();
+        let height = self.pixel_data.rows();
+        let mut grid: Grid<u8> = Grid::init_with_order(height, width * 4, Order::RowMajor, 0);
+
+        self.pixel_data.iter().enumerate().for_each(|(i, pixel)| {
+            let x = i % width;
+            let y = i / width;
+            let rgba_index = x * 4;
+            let rgba: [u8; 4] = pixel.as_ref().map_or([0, 0, 0, 0], |palette_index| {
+                let color = palette.get_color(*palette_index);
+                [color.red, color.green, color.blue, 255]
+            });
+            rgba.into_iter().enumerate().for_each(|(k, v)| {
+                if let Some(cell) = grid.get_mut(y, rgba_index + k) {
+                    *cell = v;
+                }
+            });
+        });
+
+        grid
     }
 }
 
