@@ -1,13 +1,11 @@
 use crate::wad::raw::{LumpName, LumpNameError};
 use grid::{Grid, Order};
-use itertools::Itertools;
 use thiserror::Error;
-use truncate_integer::TruncateUnchecked;
 use usize_conv::ToUsize;
 use winnow::Parser;
 use winnow::Result;
-use winnow::binary::{le_i16, le_u8, le_u16, le_u32};
-use winnow::combinator::repeat_till;
+use winnow::binary::{le_i16, le_u8, le_u16, le_u32, length_repeat};
+use winnow::combinator::{repeat, repeat_till};
 use winnow::error::{ContextError, FromExternalError, ParseError};
 use winnow::token::{literal, rest, take};
 
@@ -42,6 +40,13 @@ impl PaletteColor {
             blue: bytes[2],
         }
     }
+
+    fn parser(bytes: &mut &[u8]) -> Result<Self> {
+        let red = le_u8.parse_next(bytes)?;
+        let green = le_u8.parse_next(bytes)?;
+        let blue = le_u8.parse_next(bytes)?;
+        Ok(Self { red, green, blue })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -66,36 +71,16 @@ impl Palette {
     /// # Errors
     /// `PaletteError` if the input slice does not have a length of 256 * 3 bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PaletteError> {
-        if bytes.len() != 256 * 3 {
-            return Err(PaletteError {
+        let palette_colors: Vec<PaletteColor> = repeat(256, PaletteColor::parser)
+            .parse(bytes)
+            .map_err(|_| PaletteError {
                 length: bytes.len(),
-            });
-        }
-
-        let palette = Self {
-            colors: bytes
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .enumerate()
-                .map(|(i, chunk)| {
-                    (
-                        PaletteIndex(i.truncate_unchecked()),
-                        PaletteColor::from_bytes(*chunk),
-                    )
-                })
-                .fold(
-                    [PaletteColor::new(0, 0, 0); 256],
-                    |mut colors, (index, color)| {
-                        if let Some(slot) = colors.get_mut(index.0.to_usize()) {
-                            *slot = color;
-                        }
-                        colors
-                    },
-                ),
-        };
-
-        Ok(palette)
+            })?;
+        Ok(Self {
+            colors: palette_colors.try_into().map_err(|_| PaletteError {
+                length: bytes.len(),
+            })?,
+        })
     }
 
     pub fn set_color(&mut self, index: PaletteIndex, color: PaletteColor) {
@@ -104,6 +89,30 @@ impl Palette {
         unsafe {
             *self.colors.get_unchecked_mut(index.0.to_usize()) = color;
         }
+    }
+
+    fn parser(bytes: &mut &[u8]) -> Result<Self> {
+        let original_length = bytes.len();
+        let colors: Vec<PaletteColor> = repeat(256, PaletteColor::parser)
+            .parse_next(bytes)
+            .map_err(|_| {
+                ContextError::from_external_error(
+                    bytes,
+                    PaletteError {
+                        length: original_length,
+                    },
+                )
+            })?;
+        Ok(Self {
+            colors: colors.try_into().map_err(|_| {
+                ContextError::from_external_error(
+                    bytes,
+                    PaletteError {
+                        length: original_length,
+                    },
+                )
+            })?,
+        })
     }
 }
 
@@ -120,24 +129,18 @@ impl DoomPalettes {
     /// # Errors
     /// Returns `PaletteError` if the input slice does not have a length of 14 * 256 * 3 bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PaletteError> {
-        if bytes.len() != 14 * 256 * 3 {
-            return Err(PaletteError {
-                length: bytes.len(),
-            });
-        }
-
-        let palettes_vec: Vec<Palette> = bytes
-            .as_chunks::<768>()
-            .0
-            .iter()
-            .map(|chunk| Palette::from_bytes(chunk))
-            .try_collect()?;
-
-        Ok(Self {
-            palettes: palettes_vec.try_into().map_err(|_| PaletteError {
-                length: bytes.len(),
-            })?,
-        })
+        let original_length = bytes.len();
+        repeat(14, Palette::parser)
+            .parse(bytes)
+            .map_err(|_| PaletteError {
+                length: original_length,
+            })
+            .and_then(|palettes_vec: Vec<Palette>| {
+                palettes_vec.try_into().map_err(|_| PaletteError {
+                    length: original_length,
+                })
+            })
+            .map(|palettes| Self { palettes })
     }
 }
 
@@ -163,9 +166,7 @@ impl PatchHeader {
         let left_offset = le_i16.parse_next(bytes)?;
         let top_offset = le_i16.parse_next(bytes)?;
 
-        let column_offsets = (0..width.to_usize())
-            .map(|_| le_u32.parse_next(bytes))
-            .collect::<Result<Vec<_>>>()?;
+        let column_offsets: Vec<u32> = repeat(width.to_usize(), le_u32).parse_next(bytes)?;
 
         Ok(Self {
             left_offset,
@@ -456,13 +457,11 @@ fn map_pnames_parse_error(error: ParseError<&[u8], ContextError>) -> PnamesError
 }
 
 fn pnames_parser(bytes: &mut &[u8]) -> Result<Vec<LumpName>> {
-    let num_textures = le_u32.parse_next(bytes)?;
-    (0..num_textures.to_usize())
-        .map(|_| -> Result<LumpName> {
-            let name_bytes = take(8usize).parse_next(bytes)?;
-            LumpName::try_from(name_bytes).map_err(|e| ContextError::from_external_error(bytes, e))
-        })
-        .collect::<Result<Vec<_>>>()
+    length_repeat(le_u32, |bytes: &mut &[u8]| {
+        let name_bytes = take(8usize).parse_next(bytes)?;
+        LumpName::try_from(name_bytes).map_err(|e| ContextError::from_external_error(bytes, e))
+    })
+    .parse_next(bytes)
 }
 
 /// # Errors
@@ -571,10 +570,10 @@ impl VanillaTextureDefinition {
         let height = le_u16.parse_next(bytes)?;
         take(4usize).parse_next(bytes)?;
 
-        let num_patches = le_u16.parse_next(bytes)?;
-        let patches = (0..num_patches.to_usize())
-            .map(|_| VanillaTexturePatch::bytes_parser.parse_next(bytes))
-            .collect::<Result<Vec<_>>>()?;
+        let patches = length_repeat(le_u16, |bytes: &mut &[u8]| {
+            VanillaTexturePatch::bytes_parser.parse_next(bytes)
+        })
+        .parse_next(bytes)?;
 
         Ok(Self {
             name,
@@ -614,8 +613,5 @@ pub fn parse_vanilla_texture_definitions(
 }
 
 fn texture_offsets_parser(bytes: &mut &[u8]) -> Result<Vec<u32>> {
-    let num_textures = le_u32.parse_next(bytes)?;
-    (0..num_textures)
-        .map(|_| le_u32.parse_next(bytes))
-        .collect::<Result<Vec<_>, _>>()
+    length_repeat(le_u32, |bytes: &mut &[u8]| le_u32.parse_next(bytes)).parse_next(bytes)
 }

@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::Read;
@@ -258,7 +259,7 @@ pub fn load_wad(path: &PathBuf, wad_type: WadType) -> Result<WadView, WadLoading
     let header_info = parse_wad_header(&bytes)?;
     let lump_infos = parse_wad_directory(&bytes, header_info)?;
     let lumps = lump_infos
-        .into_iter()
+        .into_par_iter()
         .map(|lump_info| read_lump(&bytes, wad_type, lump_info))
         .collect::<Result<Vec<_>, WadLoadingError>>()?;
 
@@ -475,7 +476,7 @@ pub fn patch_wad(wad: &mut WadView, patch_wad: &WadView) {
 }
 
 #[must_use]
-fn is_map_marker(name: LumpName) -> bool {
+pub fn is_map_marker(name: LumpName) -> bool {
     let s = name.as_str();
     parse_map_marker(s).is_ok()
 }
@@ -501,7 +502,7 @@ fn parse_map_marker(input: &str) -> Result<()> {
 }
 
 #[must_use]
-fn is_map_lump(name: LumpName) -> bool {
+pub fn is_map_lump(name: LumpName) -> bool {
     let s = name.as_str();
     matches!(
         s,
