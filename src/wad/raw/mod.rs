@@ -414,47 +414,64 @@ fn apply_namespaces_between_markers(
     }
 }
 
+fn map_data_end(lumps: &[Lump], start_index: usize) -> usize {
+    let mut end = start_index + 1;
+    while let Some(lump) = lumps.get(end) {
+        if !is_map_lump(lump.name) {
+            break;
+        }
+        end += 1;
+    }
+    end
+}
+
 pub fn patch_wad(wad: &mut WadView, patch_wad: &WadView) {
-    patch_wad
-        .lumps
-        .iter()
-        .filter(|patch_lump| !(is_map_lump(patch_lump.name) || is_map_marker(patch_lump.name)))
-        .for_each(|patch_lump| {
+    // Real WAD patching is map-aware: each MAPxx/ExMx block is a semantic region, while global lumps
+    // like PNAMES/TEXTURE1 are not part of that region. Replacing entire blocks by directory offset is
+    // what clobbers unrelated global lumps.
+    let mut patch_index = 0;
+    while patch_index < patch_wad.lumps.len() {
+        let Some(patch_lump) = patch_wad.lumps.get(patch_index) else {
+            break;
+        };
+
+        if is_map_marker(patch_lump.name) {
+            let patch_end = map_data_end(&patch_wad.lumps, patch_index);
+            let Some(patch_region) = patch_wad.lumps.get(patch_index..patch_end) else {
+                break;
+            };
+
+            if let Some(existing_start) = wad
+                .lumps
+                .iter()
+                .position(|lump| lump.name == patch_lump.name)
+            {
+                let existing_end = map_data_end(&wad.lumps, existing_start);
+                wad.lumps
+                    .splice(existing_start..existing_end, patch_region.iter().cloned());
+            } else {
+                wad.lumps.extend(patch_region.iter().cloned());
+            }
+
+            patch_index = patch_end;
+            continue;
+        }
+
+        if !is_map_lump(patch_lump.name) {
             if let Some(existing) = wad
                 .lumps
                 .iter_mut()
-                .find(|l| l.name == patch_lump.name && l.namespace == patch_lump.namespace)
+                .find(|lump| lump.name == patch_lump.name && lump.namespace == patch_lump.namespace)
             {
                 existing.raw_data.clone_from(&patch_lump.raw_data);
                 existing.source_type = patch_lump.source_type;
             } else {
                 wad.lumps.push(patch_lump.clone());
             }
-        });
+        }
 
-    patch_wad
-        .lumps
-        .iter()
-        .enumerate()
-        .filter(|(_, patch_lump)| is_map_marker(patch_lump.name))
-        .for_each(|(patch_map_idx, patch_lump)| {
-            if let Some(wad_map_idx) = wad.lumps.iter().position(|l| l.name == patch_lump.name) {
-                (1..=11).for_each(|offset| {
-                    if let Some(patch_lump_to_add) = patch_wad.lumps.get(patch_map_idx + offset) {
-                        match wad.lumps.get_mut(wad_map_idx + offset) {
-                            Some(existing) => *existing = patch_lump_to_add.clone(),
-                            None => wad.lumps.push(patch_lump_to_add.clone()),
-                        }
-                    }
-                });
-            } else {
-                (0..=11).for_each(|offset| {
-                    if let Some(patch_lump_to_add) = patch_wad.lumps.get(patch_map_idx + offset) {
-                        wad.lumps.push(patch_lump_to_add.clone());
-                    }
-                });
-            }
-        });
+        patch_index += 1;
+    }
 }
 
 #[must_use]

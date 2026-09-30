@@ -404,6 +404,61 @@ mod map_helpers {
         }
 
         #[test]
+        fn patch_wad_preserves_global_lumps_around_map_markers() {
+            let mut iwad_builder = WadBuilder::new(WadType::Iwad);
+            iwad_builder.add_empty_lump("MAP01").unwrap();
+            for suffix in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"] {
+                iwad_builder
+                    .add_lump(suffix, vec![suffix.bytes().next().unwrap()])
+                    .unwrap();
+            }
+            iwad_builder.add_lump("PNAMES", b"base".to_vec()).unwrap();
+
+            let mut pwad_builder = WadBuilder::new(WadType::Pwad);
+            pwad_builder.add_empty_lump("MAP01").unwrap();
+            for suffix in [
+                "P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10",
+            ] {
+                pwad_builder
+                    .add_lump(suffix, vec![suffix.bytes().next().unwrap()])
+                    .unwrap();
+            }
+
+            let iwad_path = std::env::temp_dir().join(format!(
+                "rsdoom-patch-wad-iwad-{}-{}.wad",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let pwad_path = std::env::temp_dir().join(format!(
+                "rsdoom-patch-wad-pwad-{}-{}.wad",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+
+            iwad_builder.write_to_file(&iwad_path).unwrap();
+            pwad_builder.write_to_file(&pwad_path).unwrap();
+
+            let mut wad = load_wad(&iwad_path, WadType::Iwad).unwrap();
+            let pwad = load_wad(&pwad_path, WadType::Pwad).unwrap();
+            patch_wad(&mut wad, &pwad);
+
+            std::fs::remove_file(iwad_path).unwrap();
+            std::fs::remove_file(pwad_path).unwrap();
+
+            assert!(
+                wad.get_lump_by_str_name_and_namespace("PNAMES", Namespace::Global)
+                    .is_some(),
+                "patch_wad should not drop a global PNAMES lump when it sits within the map-marker patch window"
+            );
+        }
+
+        #[test]
         fn assigns_each_namespace_only_between_markers() {
             let wad = load_builder(
                 WadType::Pwad,
